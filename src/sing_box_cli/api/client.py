@@ -5,6 +5,7 @@ Provides an async client for interacting with Sing-Box HTTP API.
 
 import json
 from collections.abc import AsyncGenerator
+from contextlib import aclosing
 from typing import Any, TypeVar
 
 import httpx
@@ -224,8 +225,11 @@ class SingBoxAPIClient:
         Yields:
             TrafficData object containing traffic data (up/down in B/s)
         """
-        async for data in self._make_stream_request("/traffic", TrafficData):
-            yield data
+        async with aclosing(
+            self._make_stream_request("/traffic", TrafficData)
+        ) as stream:
+            async for data in stream:
+                yield data
 
     async def memory_stream(self) -> AsyncGenerator[MemoryData, None]:
         """
@@ -234,8 +238,9 @@ class SingBoxAPIClient:
         Yields:
             MemoryData object containing memory data (inuse/total in bytes)
         """
-        async for data in self._make_stream_request("/memory", MemoryData):
-            yield data
+        async with aclosing(self._make_stream_request("/memory", MemoryData)) as stream:
+            async for data in stream:
+                yield data
 
     async def log_stream(
         self, level: str | None = None
@@ -247,8 +252,11 @@ class SingBoxAPIClient:
             LogEntry object containing log data (type/payload)
         """
         params = {"level": level} if level else None
-        async for data in self._make_stream_request("/logs", LogEntry, params=params):
-            yield data
+        async with aclosing(
+            self._make_stream_request("/logs", LogEntry, params=params)
+        ) as stream:
+            async for data in stream:
+                yield data
 
     async def get_connections(self) -> ConnectionData:
         """

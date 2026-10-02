@@ -2,6 +2,7 @@ import asyncio
 import math
 import statistics
 from collections import deque
+from contextlib import aclosing
 from datetime import datetime
 from enum import Enum
 
@@ -645,26 +646,24 @@ class ResourceMonitor:
     async def monitor_traffic(self) -> None:
         """Monitor traffic stream from the API."""
         try:
-            async for traffic_data in self.api_client.traffic_stream():
-                self.current_traffic = traffic_data
-                if not self.running:
-                    break
-                await asyncio.sleep(self.task_interval)
-        except asyncio.CancelledError:
-            pass
+            async with aclosing(self.api_client.traffic_stream()) as stream:
+                async for traffic_data in stream:
+                    self.current_traffic = traffic_data
+                    if not self.running:
+                        break
+                    await asyncio.sleep(self.task_interval)
         except Exception as e:
             self.visualizer.console.print(f"[red]Error monitoring traffic: {str(e)}")
 
     async def monitor_memory(self) -> None:
         """Monitor memory stream from the API."""
         try:
-            async for memory_data in self.api_client.memory_stream():
-                self.current_memory = memory_data
-                if not self.running:
-                    break
-                await asyncio.sleep(self.task_interval)
-        except asyncio.CancelledError:
-            pass
+            async with aclosing(self.api_client.memory_stream()) as stream:
+                async for memory_data in stream:
+                    self.current_memory = memory_data
+                    if not self.running:
+                        break
+                    await asyncio.sleep(self.task_interval)
         except Exception as e:
             self.visualizer.console.print(f"[red]Error monitoring memory: {str(e)}")
 
@@ -674,49 +673,39 @@ class ResourceMonitor:
         # Start monitoring in separate tasks
         traffic_task = asyncio.create_task(self.monitor_traffic())
         memory_task = asyncio.create_task(self.monitor_memory())
-        with Live(
-            refresh_per_second=1 / self.visualizer.refresh_rate, screen=True
-        ) as live:
-            while self.running:
-                try:
-                    # Use the current data from the streams
-                    traffic_data = self.current_traffic
-                    memory_data = self.current_memory
-
-                    # Update display
-                    layout = self.visualizer.create_resources_layout(
-                        traffic_data, memory_data
-                    )
-                    live.update(layout)
-
-                    # Wait for next refresh
-                    await asyncio.sleep(self.visualizer.refresh_rate - 0.1)
-                except (asyncio.exceptions.CancelledError, KeyboardInterrupt):
-                    self.running = False
-                    break
-                except Exception as e:
-                    live.update(
-                        Panel(
-                            f"Unexpected error: {str(e)}",
-                            title="Error",
-                            border_style="red",
-                        )
-                    )
-                    await asyncio.sleep(2)
-
-        # Clean up monitoring tasks
-        self.running = False
-        traffic_task.cancel()
-        memory_task.cancel()
         try:
+            with Live(
+                refresh_per_second=1 / self.visualizer.refresh_rate, screen=True
+            ) as live:
+                while self.running:
+                    try:
+                        # Use the current data from the streams
+                        traffic_data = self.current_traffic
+                        memory_data = self.current_memory
+
+                        # Update display
+                        layout = self.visualizer.create_resources_layout(
+                            traffic_data, memory_data
+                        )
+                        live.update(layout)
+
+                        # Wait for next refresh
+                        await asyncio.sleep(self.visualizer.refresh_rate - 0.1)
+                    except Exception as e:
+                        live.update(
+                            Panel(
+                                f"Unexpected error: {str(e)}",
+                                title="Error",
+                                border_style="red",
+                            )
+                        )
+                        await asyncio.sleep(2)
+        finally:
+            self.running = False
+            traffic_task.cancel()
+            memory_task.cancel()
             await asyncio.gather(traffic_task, memory_task, return_exceptions=True)
-        except asyncio.CancelledError:
-            pass
 
     async def start(self) -> None:
         """Start the resource monitor."""
-        try:
-            await self.refresh_display()
-        except KeyboardInterrupt:
-            self.running = False
-            self.visualizer.console.print("Exiting resource monitor...")
+        await self.refresh_display()

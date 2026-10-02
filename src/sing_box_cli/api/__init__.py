@@ -1,5 +1,6 @@
 import asyncio
-from typing import Annotated
+from collections.abc import Callable, Coroutine
+from typing import Annotated, Any
 
 import typer
 
@@ -53,16 +54,33 @@ def create_client(
     return SingBoxAPIClient(base_url, token)
 
 
+def _run_tui(
+    ctx: typer.Context,
+    command: Callable[[SingBoxAPIClient], Coroutine[Any, Any, None]],
+    base_url: StrOrNone,
+    token: StrOrNone,
+) -> None:
+    """Run an interactive command and handle user-requested exits consistently."""
+    try:
+        ctx_obj = get_context_obj(ctx)
+        api_client = create_client(ctx_obj.config, base_url, token)
+        asyncio.run(command(api_client))
+    except (KeyboardInterrupt, EOFError):
+        pass
+    print("Exited.")
+
+
 @api.command()
 def stats(
     ctx: typer.Context, base_url: ApiUrlOption = None, token: ApiTokenOption = None
 ) -> None:
     """Show sing-box traffic, memory statistics and connections, requires API token(Optional)"""
-    ctx_obj = get_context_obj(ctx)
-    api_client = create_client(ctx_obj.config, base_url, token)
-    visualizer = ResourceVisualizer()
-    monitor = ResourceMonitor(api_client, visualizer)
-    asyncio.run(monitor.start())
+    _run_tui(
+        ctx,
+        lambda client: ResourceMonitor(client, ResourceVisualizer()).start(),
+        base_url,
+        token,
+    )
 
 
 @api.command()
@@ -70,10 +88,7 @@ def conns(
     ctx: typer.Context, base_url: ApiUrlOption = None, token: ApiTokenOption = None
 ) -> None:
     """Manage sing-box connections, requires API token(Optional)"""
-    ctx_obj = get_context_obj(ctx)
-    api_client = create_client(ctx_obj.config, base_url, token)
-    manager = ConnectionsManager(api_client)
-    asyncio.run(manager.run())
+    _run_tui(ctx, lambda client: ConnectionsManager(client).run(), base_url, token)
 
 
 @api.command()
@@ -81,10 +96,7 @@ def proxy(
     ctx: typer.Context, base_url: ApiUrlOption = None, token: ApiTokenOption = None
 ) -> None:
     """Manage sing-box policy groups, requires API token(Optional)"""
-    ctx_obj = get_context_obj(ctx)
-    api_client = create_client(ctx_obj.config, base_url, token)
-    manager = PolicyGroupManager(api_client)
-    asyncio.run(manager.run())
+    _run_tui(ctx, lambda client: PolicyGroupManager(client).run(), base_url, token)
 
 
 @api.command()
@@ -95,7 +107,5 @@ def logs(
     token: ApiTokenOption = None,
 ) -> None:
     """Show sing-box logs, requires API token(Optional)"""
-    ctx_obj = get_context_obj(ctx)
-    api_client = create_client(ctx_obj.config, base_url, token)
     print("⌛ Showing real-time logs (Press Ctrl+C to exit)")
-    asyncio.run(get_logs(api_client, log_level))
+    _run_tui(ctx, lambda client: get_logs(client, log_level), base_url, token)

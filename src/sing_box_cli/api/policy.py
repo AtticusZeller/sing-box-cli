@@ -1,8 +1,7 @@
-import asyncio
-
 from prompt_toolkit.application import Application
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.keys import Keys
 from prompt_toolkit.layout import FormattedTextControl, Layout as PTLayout, Window
 from rich import box
 from rich.layout import Layout
@@ -114,7 +113,9 @@ class PolicyGroupManager:
     def setup_keybindings(self) -> None:
         """Setup keyboard shortcuts."""
 
+        @self.kb.add("c-c")
         @self.kb.add("c-q")
+        @self.kb.add(Keys.SIGINT)
         def _(event) -> None:  # type: ignore[no-untyped-def] # noqa: ARG001
             """Quit the application."""
             event.app.exit()
@@ -126,7 +127,9 @@ class PolicyGroupManager:
                 self.focus_on_groups = False
                 # initiate a test for the selected group
                 if self.current_group:
-                    asyncio.create_task(self.test_group_delay(self.current_group.name))
+                    event.app.create_background_task(
+                        self.test_group_delay(self.current_group.name)
+                    )
             else:
                 self.focus_on_groups = True
 
@@ -136,7 +139,7 @@ class PolicyGroupManager:
             if self.focus_on_groups:
                 if self.selected_group_index < len(self.groups) - 1:
                     self.selected_group_index += 1
-                    asyncio.create_task(self.load_selected_group())
+                    event.app.create_background_task(self.load_selected_group())
             else:
                 if self.current_group:
                     proxies = self.current_group.all
@@ -149,7 +152,7 @@ class PolicyGroupManager:
             if self.focus_on_groups:
                 if self.selected_group_index > 0:
                     self.selected_group_index -= 1
-                    asyncio.create_task(self.load_selected_group())
+                    event.app.create_background_task(self.load_selected_group())
             else:
                 if self.selected_proxy_index > 0:
                     self.selected_proxy_index -= 1
@@ -163,7 +166,9 @@ class PolicyGroupManager:
                 proxies = self.current_group.all
                 if proxies and self.selected_proxy_index < len(proxies):
                     selected_proxy = proxies[self.selected_proxy_index]
-                    asyncio.create_task(self.select_proxy(group_name, selected_proxy))
+                    event.app.create_background_task(
+                        self.select_proxy(group_name, selected_proxy)
+                    )
 
         @self.kb.add("t")
         def _(event) -> None:  # type: ignore[no-untyped-def] # noqa: ARG001
@@ -172,14 +177,16 @@ class PolicyGroupManager:
                 proxies = self.current_group.all
                 if proxies and self.selected_proxy_index < len(proxies):
                     selected_proxy = proxies[self.selected_proxy_index]
-                    asyncio.create_task(self.test_proxy_delay(selected_proxy))
+                    event.app.create_background_task(
+                        self.test_proxy_delay(selected_proxy)
+                    )
 
         @self.kb.add("g")
         def _(event) -> None:  # type: ignore[no-untyped-def] # noqa: ARG001
             """Test delay for all proxies in the group."""
             if self.current_group:
                 group_name = self.current_group.name
-                asyncio.create_task(self.test_group_delay(group_name))
+                event.app.create_background_task(self.test_group_delay(group_name))
 
     def create_layout(self) -> PTLayout:
         """Create the application layout using Rich Layout."""
@@ -221,7 +228,7 @@ class PolicyGroupManager:
 
         footer_panel = Panel(
             Text(
-                "Ctrl+Q: Quit | Tab: Switch focus | Enter: Select proxy | "
+                "Ctrl+C/Ctrl+Q: Quit | Tab: Switch focus | Enter: Select proxy | "
                 "T: Test proxy | G: Test group | "
                 f"Status: {self.status_message}",
                 justify="center",
@@ -372,10 +379,5 @@ class PolicyGroupManager:
     async def run(self) -> None:
         """Run the policy group manager."""
 
-        try:
-            # Initial load of groups
-            await self.load_groups()
-            await self.app.run_async()
-        except Exception as e:
-            self.status_message = f"Error running application: {str(e)}"
-            await asyncio.sleep(5)
+        await self.load_groups()
+        await self.app.run_async()

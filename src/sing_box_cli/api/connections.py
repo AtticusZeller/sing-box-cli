@@ -4,6 +4,7 @@ from prompt_toolkit.application import Application
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.keys import Keys
 from prompt_toolkit.layout import (
     FormattedTextControl,
     HSplit,
@@ -168,7 +169,9 @@ class ConnectionsManager:
     def setup_keybindings(self) -> None:
         """Setup keyboard shortcuts."""
 
+        @self.kb.add("c-c")
         @self.kb.add("c-q")
+        @self.kb.add(Keys.SIGINT)
         def _(event) -> None:  # type: ignore[no-untyped-def]  # noqa: ARG001
             """Quit the application."""
             event.app.exit()
@@ -176,13 +179,14 @@ class ConnectionsManager:
         @self.kb.add("c-d")
         def _(event) -> None:  # type: ignore[no-untyped-def]  # noqa: ARG001
             """Close the connection."""
-            conn_id = self.selected_connection.id
-            asyncio.create_task(self.close_connection(str(conn_id)))
+            if self.filtered_connections:
+                conn_id = self.selected_connection.id
+                event.app.create_background_task(self.close_connection(str(conn_id)))
 
-        @self.kb.add("c-c")
+        @self.kb.add("c-x", eager=True)
         def _(event) -> None:  # type: ignore[no-untyped-def]  # noqa: ARG001
-            """Close the connection."""
-            asyncio.create_task(self.close_all_connections())
+            """Close all connections."""
+            event.app.create_background_task(self.close_all_connections())
 
         @self.kb.add("down")
         def _(event) -> None:  # type: ignore[no-untyped-def]  # noqa: ARG001
@@ -301,7 +305,7 @@ class ConnectionsManager:
                 lambda: [
                     (
                         "class:status-bar",
-                        " Ctrl+Q: Quit,  Ctrl+D: Close,  Ctrl+C: Close All, "
+                        " Ctrl+C/Ctrl+Q: Quit, Ctrl+D: Close, Ctrl+X: Close All, "
                         " ↑/↓: Move,  ←/→: Page, "
                         " Home/End: First/Last Page, "
                         " Input: Search",
@@ -377,6 +381,7 @@ class ConnectionsManager:
 
     async def close_connection(self, conn_id: str) -> None:
         """Close a specific connection."""
+        cnnt_info = f"Connection {conn_id=}"
         try:
             await self.api_client.close_connection(conn_id)
             host = self.selected_connection.metadata.host
@@ -386,7 +391,6 @@ class ConnectionsManager:
             await self.refresh_connections()
         except Exception as e:
             self.status_message = f"Error closing {cnnt_info}: {str(e)}"
-            raise
 
     async def close_all_connections(self) -> None:
         """Close all connections."""
@@ -397,7 +401,6 @@ class ConnectionsManager:
             await self.refresh_connections()
         except Exception as e:
             self.status_message = f"Error closing all connections: {str(e)}"
-            raise
 
     async def refresh_connections(self) -> None:
         """Refresh the connections data."""
@@ -420,23 +423,21 @@ class ConnectionsManager:
     async def run(self) -> None:
         """Run the interactive manager."""
         self.running = True
-        # Initial load of connections
-        await self.refresh_connections()
-        self.status_message = self.get_filter_state()
-
-        # Setup periodic refresh task
-        refresh_task = asyncio.create_task(self.periodic_refresh())
-
+        refresh_task = None
         try:
+            # Initial load of connections
+            await self.refresh_connections()
+            self.status_message = self.get_filter_state()
+            refresh_task = asyncio.create_task(self.periodic_refresh())
             await self.app.run_async()
         finally:
             self.running = False
-            # Clean up periodic refresh
-            refresh_task.cancel()
-            try:
-                await refresh_task
-            except asyncio.CancelledError:
-                pass
+            if refresh_task is not None:
+                refresh_task.cancel()
+                try:
+                    await refresh_task
+                except asyncio.CancelledError:
+                    pass
 
     async def periodic_refresh(self, interval: float = 0.5) -> None:
         """Periodically refresh connections."""
