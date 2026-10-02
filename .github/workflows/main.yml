@@ -19,6 +19,16 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: windows-service/go.mod
+
+      - name: Test Windows service helper
+        working-directory: windows-service
+        env:
+          SBC_SERVICE_INTEGRATION: "1"
+        run: go test -v ./...
+
       - name: Install uv
         uses: astral-sh/setup-uv@v6
         with:
@@ -32,6 +42,11 @@ jobs:
 
       - name: Run Code Coverage Tests Pipeline
         run: uv run bash scripts/pre-commit.sh
+
+      - name: Build and verify packaged service helpers
+        run: |
+          uv build
+          uv run python scripts/check-wheel.py
 
   release:
     name: Bump Version and Release
@@ -55,6 +70,10 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: windows-service/go.mod
 
       - name: Install uv
         uses: astral-sh/setup-uv@v6
