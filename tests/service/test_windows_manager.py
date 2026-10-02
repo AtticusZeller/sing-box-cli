@@ -65,8 +65,6 @@ def test_install_preserves_paths_with_spaces(
         str(manager.config.config_file),
         "-D",
         str(manager.config.config_dir),
-        "-c",
-        str(manager.config.config_dir / "00-service-log.json"),
     ]
 
 
@@ -105,7 +103,7 @@ def test_existing_service_is_not_reinstalled(
     manager.create_service()
     assert not any(call.args[0][1] == "install" for call in run.call_args_list)
     assert any(call.args[0][1] == "set" for call in run.call_args_list)
-    # Existing installations must receive the fixed paths and warn overlay too.
+    # Existing installations must receive the fixed paths too.
     run.assert_any_call(
         [
             "nssm.exe",
@@ -129,10 +127,19 @@ def test_existing_service_is_not_reinstalled(
             str(manager.config.config_file),
             "-D",
             str(manager.config.config_dir),
-            "-c",
-            str(manager.config.config_dir / "00-service-log.json"),
         ]
     )
+
+
+def test_service_uses_user_config_without_log_overrides(
+    manager: WindowsServiceManager, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original = '{"log": {"level": "debug"}}'
+    manager.config.config_file.write_text(original, encoding="utf-8")
+    mock_commands(monkeypatch, exists=False)
+    manager.create_service()
+    assert manager.config.config_file.read_text(encoding="utf-8") == original
+    assert list(manager.config.config_dir.iterdir()) == [manager.config.config_file]
 
 
 @pytest.mark.parametrize(

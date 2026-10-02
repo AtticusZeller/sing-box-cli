@@ -1,9 +1,8 @@
-import shlex
 import shutil
 import subprocess
 from pathlib import Path
 
-from ..config.config import ConfigHandler, prepare_service_config, service_run_args
+from ..config.config import ConfigHandler, run_args, run_cmd
 
 
 class ServiceManager:
@@ -57,8 +56,7 @@ class WindowsServiceManager(ServiceManager):
     def create_service(self) -> None:
         """Create a Windows service using NSSM"""
         exists = self.check_service()
-        prepare_service_config(self.config)
-        args = service_run_args(self.config)
+        args = run_args(self.config)
         # Skip installation only when the service is known to exist.
         if not exists:
             subprocess.run(
@@ -213,7 +211,6 @@ class LinuxServiceManager(ServiceManager):
             1. https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html#Type
             2. https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html#Scheduling
         """
-        prepare_service_config(self.config)
         service_content = f"""
 [Unit]
 Description=sing-box service
@@ -232,7 +229,7 @@ RestartSec=5
 StartLimitInterval=60
 StartLimitBurst=3
 # start commands
-ExecStart={shlex.join(service_run_args(self.config))}
+ExecStart={run_cmd(self.config)}
 ExecReload=/bin/kill -HUP $MAINPID
 
 [Install]

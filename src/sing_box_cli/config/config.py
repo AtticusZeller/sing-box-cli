@@ -1,7 +1,6 @@
 import json
 import os
 import platform
-import shlex
 import shutil
 from pathlib import Path
 from typing import Self
@@ -329,17 +328,4 @@ def run_args(config: ConfigHandler) -> list[str]:
 
 
 def run_cmd(config: ConfigHandler) -> str:
-    return shlex.join(run_args(config))
-
-
-def prepare_service_config(config: ConfigHandler) -> None:
-    """Keep persistent service logs quiet without changing the user's config."""
-    # sing-box sorts config paths and gives earlier files precedence.
-    # Both files are in the same directory, so 00-service-log.json wins.
-    (config.config_dir / "00-service-log.json").write_text(
-        json.dumps({"log": {"level": "warn"}}) + "\n", encoding="utf-8"
-    )
-
-
-def service_run_args(config: ConfigHandler) -> list[str]:
-    return [*run_args(config), "-c", str(config.config_dir / "00-service-log.json")]
+    return f"{config.bin_path} run -c {config.config_file} -D {config.config_dir}"
