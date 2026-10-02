@@ -391,7 +391,7 @@ class TrafficGraph(RichPlotMixin):
             String representation of the plot
         """
         # Clear the previous plot
-        plt.clf()
+        plt.clear_figure()
 
         # Set up the plot styling
         plt.theme("dark")
