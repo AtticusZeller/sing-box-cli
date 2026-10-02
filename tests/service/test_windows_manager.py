@@ -16,7 +16,7 @@ def manager(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> WindowsServiceMa
     config.config_dir.mkdir(parents=True)
     config.config_file = config.config_dir / "config.json"
     monkeypatch.setattr(
-        WindowsServiceManager, "nssm_bin", property(lambda _self: "nssm.exe")
+        WindowsServiceManager, "helper_bin", property(lambda _self: "sbc-service.exe")
     )
     return WindowsServiceManager(config)
 
@@ -30,7 +30,7 @@ def mock_commands(
     query_error: int | None = None,
 ) -> MagicMock:
     def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        if command[0] == "sc.exe":
+        if command[1] == "exists":
             return subprocess.CompletedProcess(
                 command, query_error or (0 if exists else 1060), "query output", ""
             )
@@ -56,9 +56,12 @@ def test_install_preserves_paths_with_spaces(
     manager.create_service()
     install = next(call for call in run.call_args_list if call.args[0][1] == "install")
     assert install.args[0] == [
-        "nssm.exe",
+        "sbc-service.exe",
         "install",
         manager.service_name,
+        "--work-dir",
+        str(manager.config.config_dir),
+        "--",
         str(manager.config.bin_path),
         "run",
         "-c",
@@ -72,7 +75,6 @@ def test_install_preserves_paths_with_spaces(
     "method,command,state,exists",
     [
         ("create_service", "install", "SERVICE_STOPPED", False),
-        ("create_service", "set", "SERVICE_STOPPED", False),
         ("start", "start", "SERVICE_STOPPED", True),
         ("stop", "stop", "SERVICE_RUNNING", True),
         ("disable", "remove", "SERVICE_STOPPED", True),
@@ -87,48 +89,33 @@ def test_command_errors_propagate(
     state: str,
     exists: bool,
 ) -> None:
-    run = mock_commands(monkeypatch, exists=exists, state=state, fail=command)
+    mock_commands(monkeypatch, exists=exists, state=state, fail=command)
     with pytest.raises(subprocess.CalledProcessError) as error:
         getattr(manager, method)()
     assert error.value.returncode == 5
     assert error.value.cmd[1] == command
-    if command == "install":
-        assert not any(call.args[0][1] == "set" for call in run.call_args_list)
 
 
-def test_existing_service_is_not_reinstalled(
+def test_existing_service_refreshes_native_command_paths(
     manager: WindowsServiceManager, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     run = mock_commands(monkeypatch)
     manager.create_service()
-    assert not any(call.args[0][1] == "install" for call in run.call_args_list)
-    assert any(call.args[0][1] == "set" for call in run.call_args_list)
-    # Existing installations must receive the fixed paths too.
-    run.assert_any_call(
-        [
-            "nssm.exe",
-            "set",
-            manager.service_name,
-            "Application",
-            str(manager.config.bin_path),
-        ],
-        check=True,
-        stdout=subprocess.DEVNULL,
+    install = next(
+        call.args[0] for call in run.call_args_list if call.args[0][1] == "install"
     )
-    parameters = next(
-        call.args[0][4]
-        for call in run.call_args_list
-        if call.args[0][1:4] == ["set", manager.service_name, "AppParameters"]
-    )
-    assert parameters == subprocess.list2cmdline(
-        [
-            "run",
-            "-c",
-            str(manager.config.config_file),
-            "-D",
-            str(manager.config.config_dir),
-        ]
-    )
+    assert install[:3] == ["sbc-service.exe", "install", manager.service_name]
+    assert install[3:] == [
+        "--work-dir",
+        str(manager.config.config_dir),
+        "--",
+        str(manager.config.bin_path),
+        "run",
+        "-c",
+        str(manager.config.config_file),
+        "-D",
+        str(manager.config.config_dir),
+    ]
 
 
 def test_service_uses_user_config_without_log_overrides(

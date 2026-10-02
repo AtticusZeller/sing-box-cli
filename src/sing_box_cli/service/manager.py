@@ -1,4 +1,4 @@
-import shutil
+import platform
 import subprocess
 from pathlib import Path
 
@@ -35,106 +35,55 @@ class ServiceManager:
 
 
 class WindowsServiceManager(ServiceManager):
-    """
-    commands: https://nssm.cc/commands
-    binary: https://nssm.cc/builds
-    """
+    """Windows SCM service managed by the bundled native Go helper."""
 
     def __init__(self, config: ConfigHandler) -> None:
         super().__init__(config)
         self.service_name = "sing-box-service"
 
     @property
-    def nssm_bin(self) -> str:
-        """Get the NSSM executable path"""
-        nssm_exe: Path | str | None = shutil.which("nssm")
-        if nssm_exe is None:
-            bin_dir = Path(__file__).parents[1] / "bin"
-            nssm_exe = bin_dir / "nssm.exe"
-        return str(nssm_exe)
+    def helper_bin(self) -> str:
+        architecture = platform.machine().lower()
+        architectures = {
+            "amd64": "amd64",
+            "x86_64": "amd64",
+            "arm64": "arm64",
+            "aarch64": "arm64",
+        }
+        if architecture not in architectures:
+            raise RuntimeError(f"Unsupported Windows architecture: {architecture}")
+        binary = (
+            Path(__file__).parents[1]
+            / "bin"
+            / f"sbc-service-windows-{architectures[architecture]}.exe"
+        )
+        if not binary.is_file():
+            raise FileNotFoundError(
+                f"Windows service helper not found: {binary}. Reinstall sing-box-cli from a built wheel."
+            )
+        return str(binary)
 
     def create_service(self) -> None:
-        """Create a Windows service using NSSM"""
-        exists = self.check_service()
-        args = run_args(self.config)
-        # Skip installation only when the service is known to exist.
-        if not exists:
-            subprocess.run(
-                [self.nssm_bin, "install", self.service_name, *args],
-                check=True,
-                stdout=subprocess.DEVNULL,
-            )
-
-        # Update existing installations too (including paths changed by uv).
-        subprocess.run(
-            [self.nssm_bin, "set", self.service_name, "Application", args[0]],
-            check=True,
-            stdout=subprocess.DEVNULL,
-        )
+        self.check_service()  # Fail on SCM access errors before attempting installation.
         subprocess.run(
             [
-                self.nssm_bin,
-                "set",
+                self.helper_bin,
+                "install",
                 self.service_name,
-                "AppParameters",
-                subprocess.list2cmdline(args[1:]),
-            ],
-            check=True,
-            stdout=subprocess.DEVNULL,
-        )
-
-        # Automatic startup at boot.
-        subprocess.run(
-            [self.nssm_bin, "set", self.service_name, "Start", "SERVICE_AUTO_START"],
-            check=True,
-            stdout=subprocess.DEVNULL,
-        )
-
-        # Configure service recovery options
-        subprocess.run(
-            [self.nssm_bin, "set", self.service_name, "AppExit", "Default", "Restart"],
-            check=True,
-            stdout=subprocess.DEVNULL,
-        )
-
-        subprocess.run(
-            [self.nssm_bin, "set", self.service_name, "AppRestartDelay", "2000"],
-            check=True,
-            stdout=subprocess.DEVNULL,
-        )
-
-        # Process priority and CPU affinity
-        subprocess.run(
-            [
-                self.nssm_bin,
-                "set",
-                self.service_name,
-                "AppPriority",
-                "HIGH_PRIORITY_CLASS",
-            ],
-            check=True,
-            stdout=subprocess.DEVNULL,
-        )
-
-        # A standalone service. This is the default.
-        subprocess.run(
-            [
-                self.nssm_bin,
-                "set",
-                self.service_name,
-                "Type",
-                "SERVICE_WIN32_OWN_PROCESS",
+                "--work-dir",
+                str(self.config.config_dir),
+                "--",
+                *run_args(self.config),
             ],
             check=True,
             stdout=subprocess.DEVNULL,
         )
 
     def check_service(self) -> bool:
-        """Check if the service exists"""
-        # Query SCM directly so missing services (1060) can be distinguished
-        # from access errors, regardless of the localized diagnostic text.
         result = subprocess.run(
-            ["sc.exe", "query", self.service_name], capture_output=True, text=True
+            [self.helper_bin, "exists", self.service_name],
+            capture_output=True,
+            text=True,
         )
         if result.returncode == 1060:  # ERROR_SERVICE_DOES_NOT_EXIST
             return False
@@ -143,7 +92,7 @@ class WindowsServiceManager(ServiceManager):
 
     def _service_state(self) -> str:
         result = subprocess.run(
-            [self.nssm_bin, "status", self.service_name],
+            [self.helper_bin, "status", self.service_name],
             capture_output=True,
             text=True,
             check=True,
@@ -151,45 +100,40 @@ class WindowsServiceManager(ServiceManager):
         return result.stdout.strip()
 
     def start(self) -> None:
-        """Start the service"""
         if self.check_service() and self._service_state() == "SERVICE_RUNNING":
             return
         subprocess.run(
-            [self.nssm_bin, "start", self.service_name],
+            [self.helper_bin, "start", self.service_name],
             check=True,
             stdout=subprocess.DEVNULL,
         )
 
     def stop(self) -> None:
-        """Stop the service"""
         if not self.check_service() or self._service_state() == "SERVICE_STOPPED":
             return
         subprocess.run(
-            [self.nssm_bin, "stop", self.service_name],
+            [self.helper_bin, "stop", self.service_name],
             check=True,
             stdout=subprocess.DEVNULL,
         )
 
     def restart(self) -> None:
-        """Restart the service"""
         subprocess.run(
-            [self.nssm_bin, "restart", self.service_name],
+            [self.helper_bin, "restart", self.service_name],
             check=True,
             stdout=subprocess.DEVNULL,
         )
 
     def status(self) -> str:
-        """Get the service status"""
         if not self.check_service():
             return "Service not installed"
         return self._service_state().replace("_", " ").title()
 
     def disable(self) -> None:
-        """Remove the service"""
         if not self.check_service():
             return
         subprocess.run(
-            [self.nssm_bin, "remove", self.service_name, "confirm"],
+            [self.helper_bin, "remove", self.service_name],
             check=True,
             stdout=subprocess.DEVNULL,
         )
