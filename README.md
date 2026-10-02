@@ -66,8 +66,9 @@ closing the terminal does not stop them. Linux continues to use the existing sys
 
 No Go installation is required when installing a published wheel. Go is needed
 only to build a wheel from source; the required version is in `windows-service/go.mod`.
-The wheel bundles amd64 and arm64 helpers. The selected sing-box core must also
-support the host architecture (the current `sing-box-bin` Windows core is amd64).
+Architecture support follows `sing-box-bin`: Windows distributes the amd64 core
+and service helper; Linux distributes amd64 and arm64 cores. No additional CPU
+architectures are introduced by the service helper.
 
 ### Logs
 

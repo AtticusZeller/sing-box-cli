@@ -21,31 +21,27 @@ class CustomBuildHook(BuildHookInterface):
         root = Path(self.root)
         output = root / "build" / "windows-service"
         output.mkdir(parents=True, exist_ok=True)
-        # Both native resources travel in the same cross-platform Python wheel.
-        # They are executables, not Python extension modules or CLI replacements.
-        for architecture in ("amd64", "arm64"):
-            filename = f"sbc-service-windows-{architecture}.exe"
-            destination = output / filename
-            subprocess.run(
-                [
-                    go,
-                    "build",
-                    "-mod=readonly",
-                    "-trimpath",
-                    "-ldflags=-s -w",
-                    "-o",
-                    str(destination),
-                    ".",
-                ],
-                cwd=root / "windows-service",
-                env={
-                    **os.environ,
-                    "GOOS": "windows",
-                    "GOARCH": architecture,
-                    "CGO_ENABLED": "0",
-                },
-                check=True,
-            )
-            build_data["force_include"][str(destination)] = (
-                f"sing_box_cli/bin/{filename}"
-            )
+        # Match sing-box-bin's single Windows amd64 resource.
+        filename = "sbc-service-windows-amd64.exe"
+        destination = output / filename
+        subprocess.run(
+            [
+                go,
+                "build",
+                "-mod=readonly",
+                "-trimpath",
+                "-ldflags=-s -w",
+                "-o",
+                str(destination),
+                ".",
+            ],
+            cwd=root / "windows-service",
+            env={
+                **os.environ,
+                "GOOS": "windows",
+                "GOARCH": "amd64",
+                "CGO_ENABLED": "0",
+            },
+            check=True,
+        )
+        build_data["force_include"][str(destination)] = f"sing_box_cli/bin/{filename}"

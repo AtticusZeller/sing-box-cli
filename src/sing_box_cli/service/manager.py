@@ -1,4 +1,3 @@
-import platform
 import subprocess
 from pathlib import Path
 
@@ -43,20 +42,8 @@ class WindowsServiceManager(ServiceManager):
 
     @property
     def helper_bin(self) -> str:
-        architecture = platform.machine().lower()
-        architectures = {
-            "amd64": "amd64",
-            "x86_64": "amd64",
-            "arm64": "arm64",
-            "aarch64": "arm64",
-        }
-        if architecture not in architectures:
-            raise RuntimeError(f"Unsupported Windows architecture: {architecture}")
-        binary = (
-            Path(__file__).parents[1]
-            / "bin"
-            / f"sbc-service-windows-{architectures[architecture]}.exe"
-        )
+        # Match sing-box-bin: Windows always ships the amd64 executable.
+        binary = Path(__file__).parents[1] / "bin" / "sbc-service-windows-amd64.exe"
         if not binary.is_file():
             raise FileNotFoundError(
                 f"Windows service helper not found: {binary}. Reinstall sing-box-cli from a built wheel."
