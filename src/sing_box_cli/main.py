@@ -1,4 +1,6 @@
 import subprocess
+from pathlib import Path
+from typing import Annotated
 
 import typer
 from rich import print
@@ -7,6 +9,7 @@ from sing_box_cli.api import api as api_app
 from sing_box_cli.common import ClearCacheOption, UpdateConfigOption, ensure_root
 from sing_box_cli.config import config as config_app
 from sing_box_cli.config.config import get_config, run_args
+from sing_box_cli.installation import install_launchers
 from sing_box_cli.service import SharedContext, get_context_obj, service as service_app
 from sing_box_cli.service.manager import create_service
 
@@ -18,9 +21,21 @@ app.add_typer(config_app, name="config")
 
 @app.callback(invoke_without_command=False)
 def callback(ctx: typer.Context) -> None:
+    if ctx.invoked_subcommand == "install":
+        return
     cfg = get_config()
     service = create_service(cfg)
     ctx.obj = SharedContext(config=cfg, service=service)
+
+
+@app.command("install")
+def install(
+    directory: Annotated[
+        Path, typer.Option("--bin-dir", help="Existing system executable directory.")
+    ] = Path("/usr/local/bin"),
+) -> None:
+    """Install both system CLI entry points, requesting sudo when needed."""
+    install_launchers(directory)
 
 
 @app.command()

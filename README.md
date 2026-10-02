@@ -31,9 +31,18 @@ uv tool install sing-box-cli
 ```bash
 # linux
 uv tool install sing-box-cli
-sudo ln -sf $(which sing-box-cli) /usr/local/bin/
-sudo ln -sf $(which sbc) /usr/local/bin/
+sbc install
 ```
+
+On Linux, `sbc install` installs both `sbc` and `sing-box-cli` into
+`/usr/local/bin`, requesting sudo only to write those system launchers. It replaces
+the old manual symlinks and can be run again safely. Use `--bin-dir PATH` to select
+another existing executable directory. Unrelated files are preserved.
+
+The system launchers use Python `-B`, so commands such as `sudo sbc service enable`
+do not create root-owned `__pycache__` files in your uv environment. Run the install
+command as your normal user after installing the tool. Do not run `uv tool install`,
+`uv tool upgrade`, or `uv run` with sudo.
 
 Install with specific sing-box version
 
@@ -45,6 +54,9 @@ Upgrade
 ```bash
 uv tool upgrade sing-box-cli
 ```
+
+Linux launchers continue to use the same environment after a normal uv upgrade.
+Run `sbc install` again if you move or change the installation environment.
 
 After upgrading on Windows, run the following in an administrator PowerShell:
 
