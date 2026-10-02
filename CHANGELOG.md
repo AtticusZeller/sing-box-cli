@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.1.4 - 2026-10-02
+
+### 🐛 Bug Fixes
+
+- *(config)* Validate Android subscription configs
+
 ## 0.1.3 - 2026-10-02
 
 ### 🚀 Features
