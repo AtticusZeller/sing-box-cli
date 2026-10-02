@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.1.2 - 2026-10-02
+
+### 🚀 Features
+
+- Replace NSSM with a native Go Windows service (#25)
+
+### 🐛 Bug Fixes
+
+- Windows service startup paths and error handling (#24)
+- *(release)* Correct changelog repository
+
+### ⚙️ Miscellaneous Tasks
+
+- Remove repo
+- Update readme
+- Revise sing-box-cli installation instructions
+
 ## 0.1.1 - 2025-12-28
 
 ### 🚀 Features
