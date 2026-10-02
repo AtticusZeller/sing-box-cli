@@ -19,7 +19,7 @@ def _require_linux() -> None:
 
 
 def _privileged_run(args: list[str]) -> None:
-    if os.geteuid() != 0:
+    if sys.platform == "linux" and os.geteuid() != 0:
         args = ["sudo", *args]
     try:
         subprocess.run(args, check=True)
