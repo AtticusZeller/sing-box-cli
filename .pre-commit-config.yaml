@@ -22,14 +22,14 @@ repos:
       - id: detect-private-key
 
   - repo: https://github.com/codespell-project/codespell
-    rev: v2.4.1
+    rev: v2.4.3
     hooks:
       - id: codespell
         args: [--write-changes]
         files: \.(py|sh|json|yml|yaml|md)$
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.13.3
+    rev: v0.16.6
     hooks:
       - id: ruff
         args: [--fix]
@@ -37,7 +37,7 @@ repos:
 
   - repo: https://github.com/astral-sh/uv-pre-commit
     # uv version.
-    rev: 0.8.23
+    rev: 0.12.10
     hooks:
       # Update the uv lockfile
       - id: uv-lock
