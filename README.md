@@ -110,3 +110,28 @@ Linux
 ```bash
 sudo sbc --help
 ```
+
+## Serve private GitHub configurations
+
+Set `GH_TOKEN` (or `GITHUB_TOKEN`) with **Contents: read** access to your private
+repository, then run as your normal user:
+
+```bash
+sbc config serve add https://github.com/owner/private-configs --domain sub.example.com
+sbc config serve list
+sbc config serve start
+sbc config serve stop
+```
+
+`list` prints URLs for valid root `.json` configurations. The server reads GitHub
+through its API without cloning; `start` runs in the background at `127.0.0.1:8080`
+by default. Use `--host` and `--port` for another listening address.
+
+Point Traefik at the server using [this example](docs/traefik-config-serve.yml).
+Clients continue to use the existing update command:
+
+```bash
+sbc config update https://sub.example.com/alice.json --restart
+```
+
+See [configuration server details](docs/config-serve.md) for settings, logs and limits.

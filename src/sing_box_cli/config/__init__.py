@@ -4,7 +4,10 @@ import typer
 from rich import print
 
 from ..common import StrOrNone, ensure_root
-from ..service import get_context_obj
+from ..service import SharedContext, get_context_obj
+from ..service.manager import create_service
+from .config import get_config
+from .serve import serve
 
 __all__ = ["config"]
 
@@ -17,6 +20,14 @@ RestartServiceOption = Annotated[
     bool, typer.Option("--restart", "-r", help="Restart service after update.")
 ]
 config = typer.Typer(help="Configuration management commands")
+config.add_typer(serve, name="serve")
+
+
+@config.callback()
+def config_callback(ctx: typer.Context) -> None:
+    if ctx.invoked_subcommand != "serve":
+        cfg = get_config()
+        ctx.obj = SharedContext(config=cfg, service=create_service(cfg))
 
 
 @config.command("update")

@@ -21,7 +21,7 @@ app.add_typer(config_app, name="config")
 
 @app.callback(invoke_without_command=False)
 def callback(ctx: typer.Context) -> None:
-    if ctx.invoked_subcommand == "install":
+    if ctx.invoked_subcommand in ("install", "config"):
         return
     cfg = get_config()
     service = create_service(cfg)

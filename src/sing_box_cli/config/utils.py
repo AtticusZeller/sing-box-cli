@@ -40,7 +40,9 @@ def load_json_asdict(config_file: Path) -> dict[str, Any]:
 
 
 def request_get(url: str, token: str) -> httpx.Response | None:
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    headers = {"Content-Type": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     try:
         response = httpx.get(url, headers=headers)
         response.raise_for_status()

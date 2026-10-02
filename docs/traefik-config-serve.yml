@@ -1,0 +1,19 @@
+# Merge these entries into the existing http.routers and http.services sections.
+# Set the domain to match config serve add --domain.
+http:
+  routers:
+    config-serve:
+      rule: "Host(`sub.example.com`)"
+      entryPoints:
+        - websecure
+      service: config-serve
+      tls: {}
+
+  services:
+    config-serve:
+      loadBalancer:
+        passHostHeader: true
+        servers:
+          # Host gateway used by the existing digitalocean-public Traefik config.
+          # Bind sbc config serve start --host 172.18.0.1 --port 8080 on the host.
+          - url: "http://172.18.0.1:8080"

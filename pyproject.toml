@@ -75,7 +75,7 @@ packages = ["src/sing_box_cli"]
 path = "hatch_build.py"
 
 [tool.hatch.build.targets.sdist]
-include = ["/src", "/windows-service", "/hatch_build.py", "/pyproject.toml", "/README.md", "/LICENSE"]
+include = ["/src", "/windows-service", "/docs", "/hatch_build.py", "/pyproject.toml", "/README.md", "/LICENSE"]
 
 ## Test
 [tool.mypy]
