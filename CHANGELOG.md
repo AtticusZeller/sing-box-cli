@@ -2,15 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.1.3 - 2026-10-02
+
+### 🚀 Features
+
+- *(cli)* Install safe system launchers
+- *(config)* Serve private GitHub configs
+
+### 🐛 Bug Fixes
+
+- *(status)* Use clear_figure for traffic graph
+- *(cli)* Guard Linux-only privilege check
+- *(tui)* Unify exit keys and clean up tasks
+
 ## 0.1.2 - 2026-10-02
 
 ### 🚀 Features
 
-- Replace NSSM with a native Go Windows service (#25)
+- Replace NSSM with a native Go Windows service (#25) in #25
 
 ### 🐛 Bug Fixes
 
-- Windows service startup paths and error handling (#24)
+- Windows service startup paths and error handling (#24) in #24
 - *(release)* Correct changelog repository
 
 ### ⚙️ Miscellaneous Tasks
