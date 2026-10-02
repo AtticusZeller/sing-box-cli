@@ -1,8 +1,9 @@
+import shlex
 import shutil
 import subprocess
 from pathlib import Path
 
-from ..config.config import ConfigHandler, run_cmd
+from ..config.config import ConfigHandler, prepare_service_config, service_run_args
 
 
 class ServiceManager:
@@ -43,7 +44,6 @@ class WindowsServiceManager(ServiceManager):
     def __init__(self, config: ConfigHandler) -> None:
         super().__init__(config)
         self.service_name = "sing-box-service"
-        self.status_list = ["SERVICE_RUNNING", "SERVICE_STOPPED", "SERVICE_PAUSED"]
 
     @property
     def nssm_bin(self) -> str:
@@ -56,21 +56,34 @@ class WindowsServiceManager(ServiceManager):
 
     def create_service(self) -> None:
         """Create a Windows service using NSSM"""
-        # Install the service
-        try:
+        exists = self.check_service()
+        prepare_service_config(self.config)
+        args = service_run_args(self.config)
+        # Skip installation only when the service is known to exist.
+        if not exists:
             subprocess.run(
-                [
-                    self.nssm_bin,
-                    "install",
-                    self.service_name,
-                    *run_cmd(self.config).split(),
-                ],
+                [self.nssm_bin, "install", self.service_name, *args],
                 check=True,
                 stdout=subprocess.DEVNULL,
             )
-        except subprocess.CalledProcessError:
-            # Service might already exist, which is fine for a create
-            pass
+
+        # Update existing installations too (including paths changed by uv).
+        subprocess.run(
+            [self.nssm_bin, "set", self.service_name, "Application", args[0]],
+            check=True,
+            stdout=subprocess.DEVNULL,
+        )
+        subprocess.run(
+            [
+                self.nssm_bin,
+                "set",
+                self.service_name,
+                "AppParameters",
+                subprocess.list2cmdline(args[1:]),
+            ],
+            check=True,
+            stdout=subprocess.DEVNULL,
+        )
 
         # Automatic startup at boot.
         subprocess.run(
@@ -120,34 +133,44 @@ class WindowsServiceManager(ServiceManager):
 
     def check_service(self) -> bool:
         """Check if the service exists"""
+        # Query SCM directly so missing services (1060) can be distinguished
+        # from access errors, regardless of the localized diagnostic text.
         result = subprocess.run(
-            [self.nssm_bin, "status", self.service_name], capture_output=True, text=True
+            ["sc.exe", "query", self.service_name], capture_output=True, text=True
         )
-        return result.stdout.strip() in self.status_list
+        if result.returncode == 1060:  # ERROR_SERVICE_DOES_NOT_EXIST
+            return False
+        result.check_returncode()
+        return True
+
+    def _service_state(self) -> str:
+        result = subprocess.run(
+            [self.nssm_bin, "status", self.service_name],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return result.stdout.strip()
 
     def start(self) -> None:
         """Start the service"""
-        try:
-            subprocess.run(
-                [self.nssm_bin, "start", self.service_name],
-                check=True,
-                stdout=subprocess.DEVNULL,
-            )
-        except subprocess.CalledProcessError:
-            pass
+        if self.check_service() and self._service_state() == "SERVICE_RUNNING":
+            return
+        subprocess.run(
+            [self.nssm_bin, "start", self.service_name],
+            check=True,
+            stdout=subprocess.DEVNULL,
+        )
 
     def stop(self) -> None:
         """Stop the service"""
-        try:
-            subprocess.run(
-                [self.nssm_bin, "stop", self.service_name],
-                check=True,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-        except subprocess.CalledProcessError:
-            # Service might not be running, which is fine for a stop
-            pass
+        if not self.check_service() or self._service_state() == "SERVICE_STOPPED":
+            return
+        subprocess.run(
+            [self.nssm_bin, "stop", self.service_name],
+            check=True,
+            stdout=subprocess.DEVNULL,
+        )
 
     def restart(self) -> None:
         """Restart the service"""
@@ -155,31 +178,23 @@ class WindowsServiceManager(ServiceManager):
             [self.nssm_bin, "restart", self.service_name],
             check=True,
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
         )
 
     def status(self) -> str:
         """Get the service status"""
-        result = subprocess.run(
-            [self.nssm_bin, "status", self.service_name], capture_output=True, text=True
-        )
-        return (
-            result.stdout.replace("_", " ").title().strip()
-            if result.stdout
-            else "Service not installed"
-        )
+        if not self.check_service():
+            return "Service not installed"
+        return self._service_state().replace("_", " ").title()
 
     def disable(self) -> None:
         """Remove the service"""
-        try:
-            subprocess.run(
-                [self.nssm_bin, "remove", self.service_name, "confirm"],
-                check=True,
-                stdout=subprocess.DEVNULL,
-            )
-        except subprocess.CalledProcessError:
-            # Service might not exist, which is fine for a disable
-            pass
+        if not self.check_service():
+            return
+        subprocess.run(
+            [self.nssm_bin, "remove", self.service_name, "confirm"],
+            check=True,
+            stdout=subprocess.DEVNULL,
+        )
 
     def version(self) -> str:
         result = subprocess.run([self.config.bin_path, "version"], capture_output=True)
@@ -198,6 +213,7 @@ class LinuxServiceManager(ServiceManager):
             1. https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html#Type
             2. https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html#Scheduling
         """
+        prepare_service_config(self.config)
         service_content = f"""
 [Unit]
 Description=sing-box service
@@ -216,7 +232,7 @@ RestartSec=5
 StartLimitInterval=60
 StartLimitBurst=3
 # start commands
-ExecStart={run_cmd(self.config)}
+ExecStart={shlex.join(service_run_args(self.config))}
 ExecReload=/bin/kill -HUP $MAINPID
 
 [Install]
