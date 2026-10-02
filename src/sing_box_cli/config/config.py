@@ -315,5 +315,17 @@ def get_config() -> ConfigHandler:
     return config
 
 
+def run_args(config: ConfigHandler) -> list[str]:
+    """Build subprocess arguments without splitting paths containing whitespace."""
+    return [
+        str(config.bin_path),
+        "run",
+        "-c",
+        str(config.config_file),
+        "-D",
+        str(config.config_dir),
+    ]
+
+
 def run_cmd(config: ConfigHandler) -> str:
     return f"{config.bin_path} run -c {config.config_file} -D {config.config_dir}"
