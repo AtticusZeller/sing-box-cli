@@ -34,6 +34,12 @@ limited to 5 MiB and must be compatible with the bundled core. Referenced siblin
 files are not downloaded. Existing client `--token` subscriptions and saved
 settings remain supported; server URLs need no client token.
 
+Android's `route.override_android_vpn: true` is disabled only in the temporary
+core-check copy, so a Linux or Windows server can distribute Android configurations.
+Responses retain the original bytes, including the Android setting. Invalid
+option types, unknown fields and other core errors are still rejected; this does
+not verify the target device's runtime environment.
+
 ## Traefik
 
 Merge [the example router and service](traefik-config-serve.yml) into the existing

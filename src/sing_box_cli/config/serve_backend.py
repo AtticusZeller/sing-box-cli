@@ -269,11 +269,18 @@ def validate_config(content: bytes) -> None:
         raise ServeError("Configuration is not valid JSON.", 422)
     if not isinstance(data, dict) or not data:
         raise ServeError("Configuration must be a non-empty JSON object.", 422)
+    validation_content = content
+    route = data.get("route")
+    if isinstance(route, dict) and route.get("override_android_vpn") is True:
+        # The server's core cannot initialize this Android-only option. Disable
+        # it only in the check copy; HTTP responses retain the original bytes.
+        route["override_android_vpn"] = False
+        validation_content = json.dumps(data).encode()
     binary = str(get_bin_path())
     try:
         with tempfile.TemporaryDirectory(prefix="sbc-check-") as directory:
             path = Path(directory) / "config.json"
-            path.write_bytes(content)
+            path.write_bytes(validation_content)
             result = subprocess.run(
                 [binary, "check", "-c", str(path), "-D", directory],
                 cwd=directory,

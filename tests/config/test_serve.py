@@ -26,6 +26,10 @@ from sing_box_cli.config.serve import (
 
 SOURCE = backend.Source("https://github.com/owner/private-configs", "sub.example.com")
 VALID_CONFIG = b'{"outbounds":[{"type":"direct","tag":"direct"}]}'
+ANDROID_CONFIG = (
+    b'{\n  "route": {"override_android_vpn": true},\n'
+    b'  "outbounds": [{"type": "direct", "tag": "direct"}]\n}\n'
+)
 
 
 def file_entry(filename: str, content: bytes) -> dict[str, object]:
@@ -188,6 +192,10 @@ def test_unsafe_file_requests_do_not_reach_github(filename: str) -> None:
         b"{}",
         b'{"token":"secret"}',
         b'{"outbounds":[{"type":"not-real"}]}',
+        b'{"route":{"override_android_vpn":true},"token":"secret"}',
+        b'{"route":{"override_android_vpn":true},"outbounds":[{"type":"not-real"}]}',
+        b'{"route":{"override_android_vpn":"true"}}',
+        b'{"route":{"override_android_vpn":1}}',
     ],
 )
 def test_real_core_rejects_non_configurations(content: bytes) -> None:
@@ -197,8 +205,9 @@ def test_real_core_rejects_non_configurations(content: bytes) -> None:
     assert "secret" not in str(error.value)
 
 
-def test_real_core_accepts_configuration() -> None:
-    backend.validate_config(VALID_CONFIG)
+@pytest.mark.parametrize("content", [VALID_CONFIG, ANDROID_CONFIG])
+def test_real_core_accepts_configuration(content: bytes) -> None:
+    backend.validate_config(content)
 
 
 def test_registration_and_list_cli(
@@ -206,21 +215,21 @@ def test_registration_and_list_cli(
 ) -> None:
     main = importlib.import_module("sing_box_cli.main")
     cli = importlib.import_module("sing_box_cli.config.serve")
+    files = {
+        "alice.json": VALID_CONFIG,
+        "android.json": ANDROID_CONFIG,
+        "app.json": b'{"token":"secret"}',
+    }
     github = backend.GitHub(
         "server-only-token",
         httpx.MockTransport(
             lambda request: httpx.Response(
                 200,
-                json=[
-                    file_entry("alice.json", VALID_CONFIG),
-                    file_entry("app.json", b'{"token":"secret"}'),
-                ]
+                json=[file_entry(name, content) for name, content in files.items()]
                 if request.url.path.endswith("/contents/")
                 else file_entry(
                     request.url.path.rsplit("/", 1)[-1],
-                    VALID_CONFIG
-                    if request.url.path.endswith("alice.json")
-                    else b'{"token":"secret"}',
+                    files[request.url.path.rsplit("/", 1)[-1]],
                 ),
             )
         ),
@@ -245,6 +254,7 @@ def test_registration_and_list_cli(
         result = runner.invoke(main.app, ["config", "serve", "list"])
         assert result.exit_code == 0, result.output
         assert "https://sub.example.com/alice.json" in result.stdout
+        assert "https://sub.example.com/android.json" in result.stdout
         assert "https://sub.example.com/app.json" not in result.stdout
         assert "Skipped app.json" in result.stderr
         assert "secret" not in result.output
@@ -389,6 +399,19 @@ def test_existing_downloader_works_without_token(
     url, _files = http_service
     response = request_get(f"{url}/alice.json", "")
     assert response is not None and response.content == VALID_CONFIG
+
+
+def test_http_returns_android_configuration_unchanged(
+    http_service: tuple[str, dict[str, bytes]],
+) -> None:
+    url, files = http_service
+    files["android.json"] = ANDROID_CONFIG
+    with httpx.Client(
+        base_url=url, headers={"Host": SOURCE.domain}, trust_env=False
+    ) as client:
+        response = client.get("/android.json")
+        assert response.status_code == 200
+        assert response.content == ANDROID_CONFIG
 
 
 def free_port() -> int:
