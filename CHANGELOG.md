@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## 0.1.5 - 2026-10-03
+## 0.1.6 - 2026-10-03
 
 ### 🚀 Features
 
@@ -15,6 +15,7 @@ All notable changes to this project will be documented in this file.
 
 - *(config)* Retry failed direct subscription connections over IPv4 without bypassing configured proxies
 - *(config)* Extract URL credentials before logging or saving subscription URLs
+- *(test)* Handle ANSI-colored token help output in CLI compatibility checks
 
 ### Migration
 
