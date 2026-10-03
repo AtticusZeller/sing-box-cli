@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.1.5 - 2026-10-03
+
+### 🚀 Features
+
+- *(config)* Preview configuration updates with `config update --dry-run` without saving files, credentials or restarting services
+- *(config)* Unify configuration and subscription inspection with `config get` and `--subscription`, retaining hidden compatibility aliases
+- *(config)* Require independent subscription tokens via Bearer headers or `?token=...`, keeping GitHub PATs on the server
+- *(config)* Add short `token -c FILE`, `token -l` and `token -r TOKEN_OR_FILE` commands with file scopes, hashed storage and immediate revocation
+
+### 🐛 Bug Fixes
+
+- *(config)* Retry failed direct subscription connections over IPv4 without bypassing configured proxies
+- *(config)* Extract URL credentials before logging or saving subscription URLs
+
+### Migration
+
+Configuration servers now reject anonymous downloads. After upgrading, generate
+subscription credentials with `sbc token -c FILE.json` and restart the server.
+Clients must use the independent subscription token with `-t` or the generated URL.
+Keep the GitHub PAT on the server. Existing tokens are managed in the same serve
+state directory; `-d DOMAIN` selects a domain when needed.
+
 ## 0.1.4 - 2026-10-02
 
 ### 🐛 Bug Fixes
