@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 
 import httpx
 import pytest
+from rich.text import Text
 from typer.testing import CliRunner
 
 from sing_box_cli.config import serve_backend as backend, serve_tokens as tokens
@@ -399,7 +400,9 @@ def test_nested_token_options_and_help_are_compatible(
     assert tokens.load_tokens(tmp_path)[0].name == "linux"
     result = runner.invoke(main.app, ["config", "serve", "token", "-l"])
     assert result.exit_code == 0 and "linux" in result.output
+    monkeypatch.setenv("FORCE_COLOR", "1")
     for args in (["token"], ["token", "--help"]):
         result = runner.invoke(main.app, args)
         assert result.exit_code == 0, result.output
-        assert "--list" in result.output and "--revoke" in result.output
+        help_text = Text.from_ansi(result.output).plain
+        assert "--list" in help_text and "--revoke" in help_text
