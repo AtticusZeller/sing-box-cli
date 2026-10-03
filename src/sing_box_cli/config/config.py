@@ -11,7 +11,7 @@ from rich import print
 from sing_box_bin import get_bin_path
 
 from ..common import StrOrNone
-from .utils import request_get, show_diff_config
+from .utils import request_get, show_diff_config, subscription_credentials
 
 
 class ClashApiConfig(BaseModel):
@@ -239,8 +239,14 @@ class ConfigHandler:
         self._app_config.save(self._app_config_file)
         print("🔑 Token added successfully.")
 
-    def update_config(self, sub_url: StrOrNone = None, token: StrOrNone = None) -> bool:
-        """Download configuration from subscription URL and show differences."""
+    def update_config(
+        self,
+        sub_url: StrOrNone = None,
+        token: StrOrNone = None,
+        *,
+        dry_run: bool = False,
+    ) -> bool:
+        """Download and diff configuration, optionally without saving changes."""
         try:
             if sub_url is None:
                 # load from file
@@ -248,19 +254,18 @@ class ConfigHandler:
                     print("❌ No subscription URL found.")
                     return False
                 sub_url = self.sub_url
+            sub_url, token = subscription_credentials(sub_url, token)
             if token is None:
                 # load from file
                 token = self.token_content
-            print(f"⌛ Updating configuration from {sub_url}")
+            action = "Previewing" if dry_run else "Updating"
+            print(f"⌛ {action} configuration from {sub_url}")
             response = request_get(sub_url, token)
             if response is None:
                 print("❌ Failed to get configuration.")
                 return False
 
             new_config = response.text
-
-            if not self.is_windows:
-                shutil.chown(self._config_file, user=self.user, group=self.user)
 
             # make sure same order of keys to avoid showing wrong diff
             new_config = self._sing_box_config.model_validate_json(
@@ -269,8 +274,17 @@ class ConfigHandler:
             if self.config_file_content == new_config:
                 print("📄 Configuration is up to date.")
             else:
-                # update and show differences
+                # show differences before saving
                 show_diff_config(self.config_file_content, new_config)
+
+            if dry_run:
+                print("📄 Dry run: no configuration or subscription changes saved.")
+                return True
+
+            if not self.is_windows:
+                shutil.chown(self._config_file, user=self.user, group=self.user)
+
+            if self.config_file_content != new_config:
                 self.config_file_content = new_config
 
             # Update subscription url file
@@ -307,10 +321,10 @@ class ConfigHandler:
         return info
 
 
-def get_config() -> ConfigHandler:
-    """Get a cached ConfigHandler instance."""
+def get_config(*, initialize: bool = True) -> ConfigHandler:
+    """Load configuration, optionally initializing local directories and files."""
     config = ConfigHandler()
-    if not config.init_directories():
+    if initialize and not config.init_directories():
         raise FileNotFoundError("❌ Failed to initialize directories")
     return config
 

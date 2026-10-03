@@ -9,6 +9,7 @@ from sing_box_cli.api import api as api_app
 from sing_box_cli.common import ClearCacheOption, UpdateConfigOption, ensure_root
 from sing_box_cli.config import config as config_app
 from sing_box_cli.config.config import get_config, run_args
+from sing_box_cli.config.serve import tokens as token_app
 from sing_box_cli.installation import install_launchers
 from sing_box_cli.service import SharedContext, get_context_obj, service as service_app
 from sing_box_cli.service.manager import create_service
@@ -17,11 +18,12 @@ app = typer.Typer(help="sing-box manager.")
 app.add_typer(api_app)
 app.add_typer(service_app, name="service")
 app.add_typer(config_app, name="config")
+app.add_typer(token_app, name="token")
 
 
 @app.callback(invoke_without_command=False)
 def callback(ctx: typer.Context) -> None:
-    if ctx.invoked_subcommand in ("install", "config"):
+    if ctx.invoked_subcommand in ("install", "config", "token"):
         return
     cfg = get_config()
     service = create_service(cfg)

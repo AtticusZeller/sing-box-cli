@@ -14,7 +14,7 @@ import psutil
 import pytest
 from typer.testing import CliRunner
 
-from sing_box_cli.config import serve_backend as backend
+from sing_box_cli.config import serve_backend as backend, serve_tokens
 from sing_box_cli.config.serve import (
     ProcessState,
     control_lock,
@@ -316,7 +316,7 @@ def test_existing_update_arguments_and_restart_are_compatible(
     config = importlib.import_module("sing_box_cli.config")
     cfg = MagicMock()
     service = MagicMock()
-    monkeypatch.setattr(config, "get_config", lambda: cfg)
+    monkeypatch.setattr(config, "get_config", lambda **_: cfg)
     monkeypatch.setattr(config, "create_service", lambda _: service)
     monkeypatch.setattr(config, "ensure_root", lambda: None)
     result = CliRunner().invoke(
@@ -332,13 +332,15 @@ def test_existing_update_arguments_and_restart_are_compatible(
     )
     assert result.exit_code == 0, result.output
     cfg.update_config.assert_called_once_with(
-        "https://sub.example.com/alice.json", "existing-token"
+        "https://sub.example.com/alice.json", "existing-token", dry_run=False
     )
     service.restart.assert_called_once()
 
 
 @pytest.fixture
-def http_service(tmp_path: Path) -> Iterator[tuple[str, dict[str, bytes]]]:
+def http_service(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[tuple[str, dict[str, bytes]]]:
     backend.save_source(tmp_path, SOURCE)
     files = {"alice.json": VALID_CONFIG}
 
@@ -353,6 +355,12 @@ def http_service(tmp_path: Path) -> Iterator[tuple[str, dict[str, bytes]]]:
     server = backend.ConfigHTTPServer(("127.0.0.1", 0), tmp_path, github)
     backend.save_source(
         tmp_path, backend.Source(SOURCE.repository, f"127.0.0.1:{server.server_port}")
+    )
+    monkeypatch.setattr(
+        serve_tokens.secrets, "token_urlsafe", lambda _: "old-client-token"
+    )
+    serve_tokens.create_token(
+        tmp_path, "alice", f"127.0.0.1:{server.server_port}", "alice.json"
     )
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -371,7 +379,7 @@ def test_http_passthrough_updates_deletions_and_validation(
     url, files = http_service
     with httpx.Client(
         base_url=url,
-        headers={"Host": SOURCE.domain, "Authorization": "Bearer old-client-token"},
+        headers={"Authorization": "Bearer old-client-token"},
         trust_env=False,
     ) as client:
         response = client.get("/alice.json")
@@ -384,30 +392,36 @@ def test_http_passthrough_updates_deletions_and_validation(
         assert response.status_code == 422 and "secret" not in response.text
         del files["alice.json"]
         assert client.get("/alice.json").status_code == 404
-        assert client.get("/%2E%2E%2Fsecret.json").status_code == 404
+        assert client.get("/%2E%2E%2Fsecret.json").status_code == 401
         assert (
             client.get("/alice.json", headers={"Host": "other.example.com"}).status_code
-            == 404
+            == 401
         )
 
 
-def test_existing_downloader_works_without_token(
+def test_existing_downloader_requires_subscription_token(
     http_service: tuple[str, dict[str, bytes]],
 ) -> None:
     from sing_box_cli.config.utils import request_get
 
     url, _files = http_service
-    response = request_get(f"{url}/alice.json", "")
+    assert request_get(f"{url}/alice.json", "") is None
+    response = request_get(f"{url}/alice.json", "old-client-token")
     assert response is not None and response.content == VALID_CONFIG
 
 
 def test_http_returns_android_configuration_unchanged(
-    http_service: tuple[str, dict[str, bytes]],
+    http_service: tuple[str, dict[str, bytes]], tmp_path: Path
 ) -> None:
     url, files = http_service
     files["android.json"] = ANDROID_CONFIG
+    serve_tokens.create_token(
+        tmp_path, "android", httpx.URL(url).netloc.decode(), "android.json"
+    )
     with httpx.Client(
-        base_url=url, headers={"Host": SOURCE.domain}, trust_env=False
+        base_url=url,
+        headers={"Authorization": "Bearer old-client-token"},
+        trust_env=False,
     ) as client:
         response = client.get("/android.json")
         assert response.status_code == 200
@@ -452,7 +466,7 @@ def test_detached_start_stop_and_stale_state(cli_environment: Path) -> None:
         assert process_state(cli_environment) == state
         # Host is not registered: a live response without making any GitHub request.
         response = httpx.get(f"http://127.0.0.1:{port}/missing.json", trust_env=False)
-        assert response.status_code == 404
+        assert response.status_code == 401
         for _ in range(2):
             result = runner.invoke(main.app, ["config", "serve", "stop"])
             assert result.exit_code == 0, result.output

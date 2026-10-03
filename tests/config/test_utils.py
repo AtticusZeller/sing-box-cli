@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 import httpx
 import pytest
 
+from sing_box_cli.config import utils
 from sing_box_cli.config.utils import load_json_asdict, request_get, show_diff_config
 
 
@@ -175,3 +176,95 @@ def test_request_get_http_error(
     captured = capsys.readouterr()
     assert f"❌ Failed to get from {url}" in captured.out
     assert "404 Not Found" in captured.out
+
+
+@pytest.mark.parametrize("failure", [httpx.ConnectError, httpx.ConnectTimeout])
+@pytest.mark.parametrize("token", ["", "test-token"])
+def test_request_get_retries_connection_over_ipv4(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    failure: type[httpx.RequestError],
+    token: str,
+) -> None:
+    url = "https://sub.example.com/client.json"
+    default_get = MagicMock(side_effect=failure("Connection reset by peer"))
+    monkeypatch.setattr(httpx, "get", default_get)
+    monkeypatch.setattr(utils, "getproxies", lambda: {})
+    requests: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"log": {"level": "info"}})
+
+    transport = httpx.MockTransport(respond)
+    ipv4_transport = MagicMock(return_value=transport)
+    monkeypatch.setattr(httpx, "HTTPTransport", ipv4_transport)
+    result = request_get(url, token)
+    assert result is not None
+    assert result.json() == {"log": {"level": "info"}}
+    ipv4_transport.assert_called_once_with(local_address="0.0.0.0")
+    assert len(requests) == 1
+    assert requests[0].method == "GET"
+    assert str(requests[0].url) == url
+    assert requests[0].headers["Content-Type"] == "application/json"
+    if token:
+        assert requests[0].headers["Authorization"] == f"Bearer {token}"
+    else:
+        assert "Authorization" not in requests[0].headers
+    assert "retrying over IPv4" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("status", [401, 403, 404, 500])
+def test_request_get_does_not_retry_http_errors(
+    monkeypatch: pytest.MonkeyPatch, status: int
+) -> None:
+    url = "https://sub.example.com/client.json"
+    response = httpx.Response(status, request=httpx.Request("GET", url))
+    default_get = MagicMock(return_value=response)
+    ipv4_transport = MagicMock()
+    monkeypatch.setattr(httpx, "get", default_get)
+    monkeypatch.setattr(httpx, "HTTPTransport", ipv4_transport)
+    assert request_get(url, "") is None
+    default_get.assert_called_once()
+    ipv4_transport.assert_not_called()
+
+
+@pytest.mark.parametrize("scheme", ["http", "https", "all"])
+def test_request_get_never_bypasses_environment_proxy(
+    monkeypatch: pytest.MonkeyPatch, scheme: str
+) -> None:
+    default_get = MagicMock(side_effect=httpx.ConnectError("Proxy connection failed"))
+    ipv4_transport = MagicMock()
+    monkeypatch.setattr(httpx, "get", default_get)
+    monkeypatch.setattr(httpx, "HTTPTransport", ipv4_transport)
+    monkeypatch.setattr(utils, "getproxies", lambda: {scheme: "http://localhost:8080"})
+    assert request_get("https://sub.example.com/client.json", "") is None
+    default_get.assert_called_once()
+    ipv4_transport.assert_not_called()
+
+
+@pytest.mark.parametrize("status", [None, 403])
+def test_request_get_reports_failed_ipv4_retry(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    status: int | None,
+) -> None:
+    monkeypatch.setattr(
+        httpx, "get", MagicMock(side_effect=httpx.ConnectError("IPv6 reset"))
+    )
+    monkeypatch.setattr(utils, "getproxies", lambda: {})
+    requests: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if status is None:
+            raise httpx.ConnectError("IPv4 failed", request=request)
+        return httpx.Response(status)
+
+    transport = httpx.MockTransport(respond)
+    monkeypatch.setattr(httpx, "HTTPTransport", lambda **_: transport)
+    assert request_get("https://sub.example.com/client.json", "") is None
+    assert len(requests) == 1
+    output = capsys.readouterr().out
+    assert output.count("Failed to get from") == 1
+    assert "IPv4 failed" in output if status is None else "403" in output

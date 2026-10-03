@@ -309,8 +309,19 @@ class ConfigRequestHandler(BaseHTTPRequestHandler):
     server: ConfigHTTPServer
 
     def do_GET(self) -> None:
+        from .serve_tokens import authorize_subscription
+
         try:
             domain = normalize_domain(self.headers.get("Host", ""))
+            parsed = urlsplit(self.path)
+            filename = unquote(parsed.path.removeprefix("/"))
+            authorize_subscription(
+                self.server.directory,
+                domain,
+                filename,
+                self.headers.get_all("Authorization", []),
+                parsed.query,
+            )
             source = next(
                 (
                     item
@@ -319,7 +330,6 @@ class ConfigRequestHandler(BaseHTTPRequestHandler):
                 ),
                 None,
             )
-            filename = unquote(urlsplit(self.path).path.removeprefix("/"))
             if source is None or not valid_filename(filename):
                 raise ServeError("Configuration not found.", 404)
             content = self.server.github.config(source, filename)
@@ -336,6 +346,9 @@ class ConfigRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(content)))
         self.send_header("Cache-Control", "no-store")
+        self.send_header("Referrer-Policy", "no-referrer")
+        if status == 401:
+            self.send_header("WWW-Authenticate", 'Bearer realm="subscription"')
         self.end_headers()
         try:
             self.wfile.write(content)

@@ -111,6 +111,33 @@ Linux
 sudo sbc --help
 ```
 
+## Configuration
+
+Preview an update before applying it:
+
+```bash
+sbc config update https://sub.example.com/alice.json --dry-run
+sbc config update https://sub.example.com/alice.json --restart
+```
+
+`--dry-run` downloads and validates the configuration, then shows its diff without
+saving configuration, subscription URL or token. It does not create local config
+files or change their ownership. If combined with `--restart`, the service is left
+running without a restart.
+
+Subscription downloads retry once over IPv4 if the default connection fails or
+times out. Configured environment proxies are preserved: this direct IPv4 retry
+is skipped when a proxy is configured. HTTP errors such as 401/403 are not retried.
+
+Use one command to choose what to print:
+
+```bash
+sbc config get                 # configuration JSON
+sbc config get --subscription  # subscription URL
+```
+
+`config show` and `config show-sub` remain available as hidden compatibility aliases.
+
 ## Serve private GitHub configurations
 
 Set `GH_TOKEN` (or `GITHUB_TOKEN`) with **Contents: read** access to your private
@@ -119,6 +146,7 @@ repository, then run as your normal user:
 ```bash
 sbc config serve add https://github.com/owner/private-configs --domain sub.example.com
 sbc config serve list
+sbc token -c alice.json
 sbc config serve start
 sbc config serve stop
 ```
@@ -127,11 +155,20 @@ sbc config serve stop
 through its API without cloning; `start` runs in the background at `127.0.0.1:8080`
 by default. Use `--host` and `--port` for another listening address.
 
+Subscription downloads require a separate token. `sbc token -c FILE.json` prints its secret
+and a URL containing `?token=...` once; only its hash is stored on the server.
+Use `sbc token -l` to list tokens, `sbc token -r TOKEN` to revoke one, or
+`sbc token -r FILE.json` to revoke all tokens for a file. Creation infers a single
+registered domain; use `-d DOMAIN` when there are multiple domains. Each token is
+limited to its domain and file. The GitHub PAT stays on the server.
+
 Point Traefik at the server using [this example](docs/traefik-config-serve.yml).
 Clients continue to use the existing update command:
 
 ```bash
-sbc config update https://sub.example.com/alice.json --restart
+sbc config update https://sub.example.com/alice.json -t '<subscription-token>' --restart
+# Apps without header options can use the token URL printed by token -c.
+sbc config update 'https://sub.example.com/alice.json?token=<subscription-token>' --dry-run
 ```
 
 See [configuration server details](docs/config-serve.md) for settings, logs and limits.

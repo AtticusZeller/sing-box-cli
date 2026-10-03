@@ -25,9 +25,17 @@ from .serve_backend import (
     state_directory,
     validate_config,
 )
+from .serve_tokens import (
+    create_token,
+    load_tokens,
+    revoke_subscription_tokens,
+    revoke_token,
+)
 
 WORKER_MODULE = "sing_box_cli.config._serve_worker"
 serve = typer.Typer(help="Serve private GitHub configurations through your own domain.")
+tokens = typer.Typer(help="Create, list and revoke independent subscription tokens.")
+serve.add_typer(tokens, name="token")
 
 
 class ProcessState(BaseModel):
@@ -268,6 +276,132 @@ def start(
         verb = "Started" if started else "Already running"
         print(f"{verb}: PID {state.pid}, {state.host}:{state.port}")
         print(f"Log: {directory / 'serve.log'}")
+
+
+@tokens.callback(invoke_without_command=True)
+def token_options(
+    ctx: typer.Context,
+    list_: Annotated[
+        bool, typer.Option("--list", "-l", help="List token names and file scopes.")
+    ] = False,
+    create: Annotated[
+        str | None,
+        typer.Option(
+            "--create", "-c", help="Create a token for this configuration filename."
+        ),
+    ] = None,
+    revoke: Annotated[
+        str | None,
+        typer.Option(
+            "--revoke",
+            "-r",
+            help="Revoke this token, or all tokens for this .json filename.",
+        ),
+    ] = None,
+    domain: Annotated[
+        str | None,
+        typer.Option(
+            "--domain",
+            "-d",
+            help="Domain; inferred when there is only one registered domain.",
+        ),
+    ] = None,
+    name: Annotated[
+        str | None, typer.Option("--name", "-n", help="Optional name for a new token.")
+    ] = None,
+) -> None:
+    """Manage subscription tokens with -l, -c FILE or -r TOKEN_OR_FILE."""
+    actions = int(list_) + int(create is not None) + int(revoke is not None)
+    if ctx.invoked_subcommand is not None:
+        if actions or domain is not None or name is not None:
+            raise typer.BadParameter("Use options or a legacy subcommand, not both.")
+        return
+    if actions == 0 and domain is None and name is None:
+        print(ctx.get_help())
+        return
+    if actions != 1:
+        raise typer.BadParameter(
+            "Choose exactly one of -l, -c FILE or -r TOKEN_OR_FILE."
+        )
+    if name is not None and create is None:
+        raise typer.BadParameter("--name is only used with --create.")
+    if list_:
+        if domain is not None:
+            raise typer.BadParameter("--domain is only used with --create or --revoke.")
+        token_list()
+    elif create is not None:
+        with command_errors():
+            if domain is None:
+                sources = load_sources(state_directory())
+                if len(sources) != 1:
+                    raise ServeError(
+                        "Specify --domain, or register a single domain first.", 400
+                    )
+                domain = sources[0].domain
+        token_create(name or f"token-{uuid.uuid4().hex[:12]}", domain, create)
+    else:
+        assert revoke is not None
+        with command_errors():
+            directory = state_directory()
+            with control_lock(directory):
+                count = revoke_subscription_tokens(directory, revoke, domain)
+            print(f"Revoked {count} subscription token(s).")
+
+
+@tokens.command("create", hidden=True)
+def token_create(
+    name: Annotated[
+        str, typer.Argument(help="Unique name for this subscription token.")
+    ],
+    domain: Annotated[
+        str, typer.Option("--domain", help="Registered subscription domain.")
+    ],
+    filename: Annotated[
+        str, typer.Option("--file", help="Root configuration filename.")
+    ],
+) -> None:
+    """Generate a file-scoped token and print its secret and URL once."""
+    with command_errors():
+        domain = normalize_domain(domain)
+        directory = state_directory()
+        with control_lock(directory):
+            source = next(
+                (item for item in load_sources(directory) if item.domain == domain),
+                None,
+            )
+            if source is None:
+                raise ServeError(
+                    "Register this domain with config serve add first.", 400
+                )
+            secret = create_token(directory, name, domain, filename)
+        print(f"Token: {secret}")
+        print(f"URL: {source.url(filename)}?token={secret}")
+        print("Save the token now; only its hash is stored on the server.")
+
+
+@tokens.command("list", hidden=True)
+def token_list() -> None:
+    """List token names and scopes without displaying their secrets."""
+    with command_errors():
+        entries = load_tokens(state_directory())
+        if not entries:
+            print("No subscription tokens.")
+        for item in entries:
+            print(f"{item.name}\t{item.domain}\t{item.filename}\t{item.created_at}")
+
+
+@tokens.command("revoke", hidden=True)
+def token_revoke(
+    name: Annotated[
+        str, typer.Argument(help="Name of the subscription token to revoke.")
+    ],
+) -> None:
+    """Revoke a token; the next request is denied without a service restart."""
+    with command_errors():
+        directory = state_directory()
+        with control_lock(directory):
+            revoke_token(directory, name)
+        print(f"Revoked subscription token: {name}")
 
 
 @serve.command("stop")
