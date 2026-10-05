@@ -33,9 +33,9 @@ every token for that file without affecting other files. Multiple tokens may
 authorize the same file, so rotation can create a replacement before revoking the
 old token. Revocation never prints the secret.
 
-The longer `config serve token -l/-c/-r` forms remain supported. The previous
-`config serve token create/list/revoke` subcommands remain hidden compatibility
-aliases; the legacy `revoke NAME` form still accepts a token name.
+Token management uses only the top-level `sbc token` options. The previous
+`config serve token` entry point and `token create/list/revoke` subcommands have
+been removed.
 
 Clients can send the token as a Bearer header using `-t` / `--token`, or use the
 printed URL with `?token=...` in applications that cannot set headers:

@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## unreleased
+
+### Changed
+
+- *(cli)* Manage subscription tokens exclusively through `sbc token` options
+- *(cli)* Remove `config serve token` and the legacy `token create/list/revoke` subcommands
+
+### Migration
+
+Use `sbc token -c FILE.json`, `sbc token -l`, and `sbc token -r TOKEN_OR_FILE`.
+Revocation accepts the actual subscription token or a configuration filename;
+revocation by token name is no longer supported. Existing subscription links
+and stored token records remain valid.
+
 ## 0.1.6 - 2026-10-03
 
 ### 🚀 Features

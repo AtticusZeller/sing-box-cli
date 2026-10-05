@@ -156,17 +156,7 @@ def test_token_management_cli_stores_only_hashes(
     backend.save_source(directory, source)
     main = importlib.import_module("sing_box_cli.main")
     runner = CliRunner()
-    args = [
-        "config",
-        "serve",
-        "token",
-        "create",
-        "linux",
-        "--domain",
-        source.domain,
-        "--file",
-        "client-linux.json",
-    ]
+    args = ["token", "-c", "client-linux.json", "-n", "linux", "-d", source.domain]
     result = runner.invoke(main.app, args)
     assert result.exit_code == 0, result.output
     secret = result.stdout.splitlines()[0].removeprefix("Token: ")
@@ -184,17 +174,17 @@ def test_token_management_cli_stores_only_hashes(
     duplicate = runner.invoke(main.app, args)
     assert duplicate.exit_code == 1
     assert path.read_text() == saved
-    result = runner.invoke(main.app, ["config", "serve", "token", "list"])
+    result = runner.invoke(main.app, ["token", "-l"])
     assert result.exit_code == 0
     assert "linux" in result.output and "client-linux.json" in result.output
     assert secret not in result.output
     assert hashlib.sha256(secret.encode()).hexdigest() not in result.output
-    result = runner.invoke(main.app, ["config", "serve", "token", "revoke", "linux"])
+    result = runner.invoke(main.app, ["token", "-r", secret])
     assert result.exit_code == 0
     assert tokens.load_tokens(directory) == []
-    result = runner.invoke(main.app, ["config", "serve", "token", "revoke", "linux"])
+    result = runner.invoke(main.app, ["token", "-r", secret])
     assert result.exit_code == 1
-    result = runner.invoke(main.app, ["config", "serve", "token", "list"])
+    result = runner.invoke(main.app, ["token", "-l"])
     assert "No subscription tokens" in result.output
 
 
@@ -219,18 +209,7 @@ def test_invalid_token_creation_does_not_save_credentials(
     )
     main = importlib.import_module("sing_box_cli.main")
     result = CliRunner().invoke(
-        main.app,
-        [
-            "config",
-            "serve",
-            "token",
-            "create",
-            name,
-            "--domain",
-            domain,
-            "--file",
-            filename,
-        ],
+        main.app, ["token", "-c", filename, "-n", name, "-d", domain]
     )
     assert result.exit_code == 1
     assert not (tmp_path / "tokens.json").exists()
@@ -384,7 +363,7 @@ def test_invalid_short_token_actions_leave_credentials_unchanged(
     assert (tmp_path / "tokens.json").read_bytes() == before
 
 
-def test_nested_token_options_and_help_are_compatible(
+def test_top_level_token_options_and_help(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("SBC_SERVE_DIR", str(tmp_path))
@@ -393,12 +372,10 @@ def test_nested_token_options_and_help_are_compatible(
     )
     main = importlib.import_module("sing_box_cli.main")
     runner = CliRunner()
-    result = runner.invoke(
-        main.app, ["config", "serve", "token", "-c", "client.json", "-n", "linux"]
-    )
+    result = runner.invoke(main.app, ["token", "-c", "client.json", "-n", "linux"])
     assert result.exit_code == 0, result.output
     assert tokens.load_tokens(tmp_path)[0].name == "linux"
-    result = runner.invoke(main.app, ["config", "serve", "token", "-l"])
+    result = runner.invoke(main.app, ["token", "-l"])
     assert result.exit_code == 0 and "linux" in result.output
     monkeypatch.setenv("FORCE_COLOR", "1")
     for args in (["token"], ["token", "--help"]):
@@ -406,3 +383,37 @@ def test_nested_token_options_and_help_are_compatible(
         assert result.exit_code == 0, result.output
         help_text = Text.from_ansi(result.output).plain
         assert "--list" in help_text and "--revoke" in help_text
+        assert "COMMAND" not in help_text
+    result = runner.invoke(main.app, ["config", "serve", "--help"])
+    assert result.exit_code == 0, result.output
+    assert "token" not in Text.from_ansi(result.output).plain
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["config", "serve", "token", "-l"],
+        ["config", "serve", "token", "list"],
+        [
+            "token",
+            "create",
+            "linux",
+            "--domain",
+            "sub.example.com",
+            "--file",
+            "client.json",
+        ],
+        ["token", "list"],
+        ["token", "revoke", "linux"],
+    ],
+)
+def test_removed_token_commands_do_not_modify_credentials(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, arguments: list[str]
+) -> None:
+    monkeypatch.setenv("SBC_SERVE_DIR", str(tmp_path))
+    tokens.create_token(tmp_path, "linux", "sub.example.com", "client.json")
+    before = (tmp_path / "tokens.json").read_bytes()
+    main = importlib.import_module("sing_box_cli.main")
+    result = CliRunner().invoke(main.app, arguments)
+    assert result.exit_code == 2, result.output
+    assert (tmp_path / "tokens.json").read_bytes() == before
