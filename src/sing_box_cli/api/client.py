@@ -104,6 +104,7 @@ class LogEntry(FrozenBaseModel):
 T = TypeVar("T", bound=FrozenBaseModel)
 
 
+# TODO： exception handling for sing-box stop working or not reachable, SpinnerColumn for retry or connecting status
 class SingBoxAPIClient:
     """Async client for interacting with Sing-Box API.
 
