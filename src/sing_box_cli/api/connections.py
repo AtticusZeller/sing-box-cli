@@ -440,10 +440,18 @@ class ConnectionsManager:
                     pass
 
     async def periodic_refresh(self, interval: float = 0.5) -> None:
-        """Periodically refresh connections."""
+        """Periodically refresh connections, retrying while the API is unreachable."""
+        failed = False
         while self.running:
             try:
                 await asyncio.sleep(interval)
                 await self.refresh_connections()
             except asyncio.CancelledError:
                 break
+            except Exception:
+                # refresh_connections already shows the error in the status bar
+                failed = True
+                continue
+            if failed:
+                failed = False
+                self.status_message = self.get_filter_state()

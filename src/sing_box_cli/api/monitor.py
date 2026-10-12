@@ -2,6 +2,7 @@ import asyncio
 import math
 import statistics
 from collections import deque
+from collections.abc import AsyncGenerator, Callable
 from contextlib import aclosing
 from datetime import datetime
 from enum import Enum
@@ -14,7 +15,13 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from .client import ConnectionInfo, MemoryData, SingBoxAPIClient, TrafficData
+from .client import (
+    ConnectionInfo,
+    FrozenBaseModel,
+    MemoryData,
+    SingBoxAPIClient,
+    TrafficData,
+)
 from .widget import RichPlotMixin, create_header_panel
 
 
@@ -575,7 +582,10 @@ class ResourceVisualizer:
         return table
 
     def create_resources_layout(
-        self, traffic_data: TrafficData, memory_data: MemoryData
+        self,
+        traffic_data: TrafficData,
+        memory_data: MemoryData,
+        api_error: str | None = None,
     ) -> Layout:
         """Create the main layout with all resource components."""
         layout = Layout()
@@ -617,7 +627,17 @@ class ResourceVisualizer:
         )
 
         # Add footer
-        layout["footer"].update(Text("Press Ctrl+C to exit", justify="center"))
+        if api_error:
+            footer = Text(
+                f"{api_error} | Press Ctrl+C to exit",
+                style="bold red",
+                justify="center",
+                no_wrap=True,
+                overflow="ellipsis",
+            )
+        else:
+            footer = Text("Press Ctrl+C to exit", justify="center")
+        layout["footer"].update(footer)
 
         return layout
 
@@ -642,30 +662,44 @@ class ResourceMonitor:
         self.current_memory = MemoryData(inuse=0, total=0)  # in bytes
         # 1.0 fix interval for avoiding repeated data
         self.task_interval = RefreshRate.SLOW.value
+        self.reconnect_interval = RefreshRate.SLOW.value
+        self.api_error: str | None = None
 
     async def monitor_traffic(self) -> None:
         """Monitor traffic stream from the API."""
-        try:
-            async with aclosing(self.api_client.traffic_stream()) as stream:
-                async for traffic_data in stream:
-                    self.current_traffic = traffic_data
-                    if not self.running:
-                        break
-                    await asyncio.sleep(self.task_interval)
-        except Exception as e:
-            self.visualizer.console.print(f"[red]Error monitoring traffic: {str(e)}")
+        await self._follow_stream(
+            self.api_client.traffic_stream, "current_traffic", TrafficData()
+        )
 
     async def monitor_memory(self) -> None:
         """Monitor memory stream from the API."""
-        try:
-            async with aclosing(self.api_client.memory_stream()) as stream:
-                async for memory_data in stream:
-                    self.current_memory = memory_data
-                    if not self.running:
-                        break
-                    await asyncio.sleep(self.task_interval)
-        except Exception as e:
-            self.visualizer.console.print(f"[red]Error monitoring memory: {str(e)}")
+        await self._follow_stream(
+            self.api_client.memory_stream, "current_memory", MemoryData()
+        )
+
+    async def _follow_stream(
+        self,
+        open_stream: Callable[[], AsyncGenerator[FrozenBaseModel, None]],
+        attr: str,
+        empty: FrozenBaseModel,
+    ) -> None:
+        """Keep ``attr`` updated from a stream, reopening it whenever it ends."""
+        while self.running:
+            try:
+                async with aclosing(open_stream()) as stream:
+                    async for data in stream:
+                        setattr(self, attr, data)
+                        self.api_error = None
+                        if not self.running:
+                            return
+                        await asyncio.sleep(self.task_interval)
+                reason = "closed by sing-box"
+            except Exception as e:
+                reason = str(e) or type(e).__name__
+            # don't keep showing stale numbers while sing-box is down
+            setattr(self, attr, empty)
+            self.api_error = f"sing-box API stream lost ({reason}), reconnecting..."
+            await asyncio.sleep(self.reconnect_interval)
 
     async def refresh_display(self) -> None:
         """Main display refresh loop."""
@@ -685,7 +719,7 @@ class ResourceMonitor:
 
                         # Update display
                         layout = self.visualizer.create_resources_layout(
-                            traffic_data, memory_data
+                            traffic_data, memory_data, self.api_error
                         )
                         live.update(layout)
 

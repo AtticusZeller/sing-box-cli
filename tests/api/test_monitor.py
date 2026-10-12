@@ -1,12 +1,21 @@
 import asyncio
+from collections.abc import Callable
 from io import StringIO
 from unittest.mock import MagicMock
 
+import httpx
 import pytest
+from fake_singbox import FakeSingBox
 from rich.console import Console
 
 from sing_box_cli.api import monitor
-from sing_box_cli.api.client import MemoryData, TrafficData
+from sing_box_cli.api.client import MemoryData, SingBoxAPIClient, TrafficData
+
+
+async def wait_until(predicate: Callable[[], bool], timeout: float = 10) -> None:
+    async with asyncio.timeout(timeout):
+        while not predicate():
+            await asyncio.sleep(0.02)
 
 
 @pytest.mark.parametrize("sample_count", [0, 1, 3])
@@ -104,3 +113,96 @@ def test_monitor_propagates_cancellation_after_cleanup(
             await memory_stream.aclose()
 
     asyncio.run(scenario())
+
+
+def test_monitor_reconnects_after_singbox_restart(
+    fake_singbox: FakeSingBox, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def scenario() -> None:
+        visualizer = MagicMock(refresh_rate=0.05)
+        client = SingBoxAPIClient(fake_singbox.base_url)
+        resource_monitor = monitor.ResourceMonitor(client, visualizer)
+        resource_monitor.task_interval = 0.01
+        resource_monitor.reconnect_interval = 0.05
+        monkeypatch.setattr(monitor, "Live", MagicMock())
+
+        def footer_error() -> str | None:
+            call = visualizer.create_resources_layout.call_args
+            return call.args[2] if call and len(call.args) > 2 else None
+
+        task = asyncio.create_task(resource_monitor.start())
+        try:
+            await wait_until(
+                lambda: resource_monitor.current_traffic
+                == TrafficData(up=100, down=200)
+                and resource_monitor.current_memory.inuse == 1024
+            )
+            assert footer_error() is None
+
+            fake_singbox.stop()
+            # stale numbers must not linger while sing-box is down
+            await wait_until(
+                lambda: resource_monitor.current_traffic == TrafficData()
+                and resource_monitor.current_memory == MemoryData()
+            )
+            await wait_until(lambda: "reconnecting" in (footer_error() or ""))
+
+            fake_singbox.traffic = {"up": 300, "down": 400}
+            fake_singbox.start()
+            await wait_until(lambda: resource_monitor.current_traffic.up == 300)
+            await wait_until(lambda: footer_error() is None)
+            assert not task.done()
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("ending", ["eof", "error"])
+def test_monitor_reopens_stream_after_it_ends(
+    ending: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def scenario() -> None:
+        opened = 0
+
+        async def traffic_stream():  # type: ignore[no-untyped-def]
+            nonlocal opened
+            opened += 1
+            yield TrafficData(up=opened)
+            if ending == "error":
+                raise httpx.ReadError("connection reset")
+
+        async def memory_stream():  # type: ignore[no-untyped-def]
+            yield MemoryData(inuse=1)
+            await asyncio.Event().wait()
+
+        client = MagicMock()
+        client.traffic_stream.side_effect = traffic_stream
+        client.memory_stream.side_effect = memory_stream
+        resource_monitor = monitor.ResourceMonitor(client, MagicMock(refresh_rate=0.05))
+        resource_monitor.task_interval = 0.01
+        resource_monitor.reconnect_interval = 0.01
+        monkeypatch.setattr(monitor, "Live", MagicMock())
+        task = asyncio.create_task(resource_monitor.start())
+        try:
+            await wait_until(lambda: resource_monitor.current_traffic.up >= 3)
+            assert resource_monitor.current_memory.inuse == 1
+            assert not task.done()
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(scenario())
+
+
+def test_resources_layout_shows_api_error() -> None:
+    visualizer = monitor.ResourceVisualizer()
+    output = StringIO()
+    console = Console(file=output, width=100, height=30, color_system=None)
+    console.print(
+        visualizer.create_resources_layout(
+            TrafficData(), MemoryData(), "sing-box API unreachable, reconnecting..."
+        )
+    )
+    assert "sing-box API unreachable, reconnecting..." in output.getvalue()

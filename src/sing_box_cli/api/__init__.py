@@ -2,12 +2,13 @@ import asyncio
 from collections.abc import Callable, Coroutine
 from typing import Annotated, Any
 
+import httpx
 import typer
 
 from ..common import LogLevel, StrOrNone
 from ..config.config import ConfigHandler
 from ..service import get_context_obj
-from .client import SingBoxAPIClient
+from .client import SingBoxAPIClient, SingBoxAPIError
 from .connections import ConnectionsManager
 from .logs import get_logs
 from .monitor import ResourceMonitor, ResourceVisualizer
@@ -67,6 +68,12 @@ def _run_tui(
         asyncio.run(command(api_client))
     except (KeyboardInterrupt, EOFError):
         pass
+    except SingBoxAPIError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+    except httpx.HTTPError as e:
+        typer.echo(f"Error: sing-box API request failed: {e}", err=True)
+        raise typer.Exit(1)
     print("Exited.")
 
 

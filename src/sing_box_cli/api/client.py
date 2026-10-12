@@ -104,6 +104,10 @@ class LogEntry(FrozenBaseModel):
 T = TypeVar("T", bound=FrozenBaseModel)
 
 
+class SingBoxAPIError(Exception):
+    """The sing-box API is unreachable or rejected the client."""
+
+
 class SingBoxAPIClient:
     """Async client for interacting with Sing-Box API.
 
@@ -123,7 +127,10 @@ class SingBoxAPIClient:
         self.headers = {"Authorization": f"Bearer {token}"} if token else {}
         self.timeout = timeout
         if not self._health_check():
-            raise ValueError(f"Invalid to initialize client: {self.base_url}")
+            raise SingBoxAPIError(
+                f"sing-box API is not reachable at {self.base_url}, "
+                "check that sing-box is running and the API URL and token are correct"
+            )
 
     def _health_check(self) -> bool:
         """Check if the API is reachable.
@@ -204,9 +211,11 @@ class SingBoxAPIClient:
         """
         url = f"{self.base_url}{endpoint}"
 
+        # streams may stay idle for long, so only reads are unbounded
+        timeout = httpx.Timeout(self.timeout, read=None)
         async with httpx.AsyncClient() as client:
             async with client.stream(
-                "GET", url, headers=self.headers, params=params, timeout=None
+                "GET", url, headers=self.headers, params=params, timeout=timeout
             ) as response:
                 response.raise_for_status()
                 async for line in response.aiter_lines():

@@ -1,9 +1,11 @@
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
+from fake_singbox import FakeSingBox
 from prompt_toolkit.application import create_app_session
 from prompt_toolkit.input import PipeInput, create_pipe_input
 from prompt_toolkit.layout import BufferControl
@@ -173,9 +175,16 @@ def test_exit_cancels_and_waits_for_pending_actions(
     asyncio.run(scenario())
 
 
+async def wait_until(predicate: Callable[[], bool], timeout: float = 10) -> None:
+    async with asyncio.timeout(timeout):
+        while not predicate():
+            await asyncio.sleep(0.02)
+
+
 @pytest.mark.parametrize("command", ["stats", "conns", "proxy", "logs"])
 @pytest.mark.parametrize(
-    "error_type", [None, KeyboardInterrupt, EOFError, RuntimeError]
+    "error_type",
+    [None, KeyboardInterrupt, EOFError, RuntimeError, ValueError, httpx.ConnectError],
 )
 def test_command_exit_status(
     command: str,
@@ -194,9 +203,16 @@ def test_command_exit_status(
     monkeypatch.setattr(api, "get_logs", AsyncMock(side_effect=error))
 
     result = CliRunner().invoke(api.api, [command])
-    if error_type is RuntimeError:
+    if error_type is httpx.ConnectError:
+        # API failures are reported, not dumped as a traceback
+        assert result.exit_code == 1, result.output
+        assert isinstance(result.exception, SystemExit)
+        assert result.output.count("Error:") == 1
+        assert "stopped" in result.output
+    elif error_type in (RuntimeError, ValueError):
+        # programming errors (including pydantic ValidationError) still surface
         assert result.exit_code != 0
-        assert isinstance(result.exception, RuntimeError)
+        assert isinstance(result.exception, error_type)
         assert "Exited." not in result.output
     else:
         assert result.exit_code == 0, result.output
@@ -265,5 +281,58 @@ def test_connection_action_errors_are_reported_in_status(
             assert not task.done()
             pipe.send_text("\x11")
             assert await asyncio.wait_for(asyncio.shield(task), timeout=1) == "exited"
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("command", ["stats", "conns", "proxy", "logs"])
+@pytest.mark.parametrize("cause", ["stopped", "bad_token"])
+def test_unreachable_api_is_reported_without_traceback(
+    command: str, cause: str, fake_singbox: FakeSingBox, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(api, "get_context_obj", lambda _ctx: MagicMock())
+    if cause == "stopped":
+        fake_singbox.stop()
+    else:
+        fake_singbox.token = "secret"
+    args = [command, "--base-url", fake_singbox.base_url, "--token", "wrong"]
+    result = CliRunner().invoke(api.api, args)
+    assert result.exit_code == 1, result.output
+    assert isinstance(result.exception, SystemExit), result.exception
+    assert "not reachable" in result.output
+    assert fake_singbox.base_url in result.output
+
+
+def test_conns_exits_cleanly_after_singbox_stops(fake_singbox: FakeSingBox) -> None:
+    async def scenario() -> None:
+        client = SingBoxAPIClient(fake_singbox.base_url)
+        async with running_manager(ConnectionsManager, client) as (manager, pipe, task):
+            fake_singbox.stop()
+            await wait_until(lambda: "Error refreshing" in manager.status_message)
+            await asyncio.sleep(1.5)  # let more refresh cycles hit the outage
+            pipe.send_text("\x11")
+            assert await asyncio.wait_for(asyncio.shield(task), timeout=5) == "exited"
+
+    asyncio.run(scenario())
+
+
+def test_conns_resumes_refreshing_after_singbox_restarts(
+    fake_singbox: FakeSingBox,
+) -> None:
+    async def scenario() -> None:
+        client = SingBoxAPIClient(fake_singbox.base_url)
+        async with running_manager(ConnectionsManager, client) as (manager, pipe, task):
+            assert manager.total_upload == 10
+            fake_singbox.stop()
+            await wait_until(lambda: "Error refreshing" in manager.status_message)
+            assert manager.total_upload == 0
+
+            fake_singbox.connections = {**fake_singbox.connections, "uploadTotal": 99}
+            fake_singbox.start()
+            await wait_until(lambda: manager.total_upload == 99)
+            await wait_until(lambda: "Error" not in manager.status_message)
+            assert not task.done()
+            pipe.send_text("\x11")
+            assert await asyncio.wait_for(asyncio.shield(task), timeout=5) == "exited"
 
     asyncio.run(scenario())

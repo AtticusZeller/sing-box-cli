@@ -2,7 +2,10 @@ import asyncio
 from unittest.mock import MagicMock
 
 import pytest
+from fake_singbox import FakeSingBox
+from typer.testing import CliRunner
 
+from sing_box_cli import api
 from sing_box_cli.api.logs import get_logs
 from sing_box_cli.common import LogLevel
 
@@ -68,3 +71,16 @@ def test_log_stream_closes_on_rendering_error() -> None:
             await underlying.aclose()
 
     asyncio.run(scenario())
+
+
+def test_logs_reports_dropped_stream_once(
+    fake_singbox: FakeSingBox, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(api, "get_context_obj", lambda _ctx: MagicMock())
+    fake_singbox.log_limit = 3  # then the connection drops mid-stream
+    args = ["logs", "--base-url", fake_singbox.base_url, "--token", "x"]
+    result = CliRunner().invoke(api.api, args)
+    assert result.exit_code == 1, result.output
+    assert isinstance(result.exception, SystemExit), result.exception
+    assert result.output.count("fake log line") == 3
+    assert result.output.count("Error:") == 1
