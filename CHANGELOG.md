@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.1.8 - 2026-10-12
+
+### 🐛 Bug Fixes
+
+- *(api)* Report an unreachable sing-box API or wrong token as a one-line error with exit code 1 instead of a traceback, for `stats`, `conns`, `proxy` and `logs`
+- *(api)* `conns` keeps refreshing after sing-box stops, recovers when it comes back, and exits cleanly while it is down
+- *(api)* `stats` reconnects its traffic and memory streams, clears stale numbers and shows the outage in the footer
+- *(api)* `logs` reports a dropped stream once and exits with code 1
+- *(api)* Streaming requests now time out when connecting to an unresponsive API; idle streams are still never cut off
+
 ## 0.1.7 - 2026-10-05
 
 ### Changed
