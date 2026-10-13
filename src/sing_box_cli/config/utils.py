@@ -1,8 +1,11 @@
 import json
+import os
+import re
+import sys
 from difflib import unified_diff
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 from urllib.request import getproxies
 
 import httpx
@@ -39,6 +42,47 @@ def load_json_asdict(config_file: Path) -> dict[str, Any]:
     except Exception as e:
         print(f"❌ Failed to load configuration: {e}")
         return {}
+
+
+def redact_url(url: str) -> str:
+    """A URL safe to print: without user info and without the value of a token."""
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return url
+    if "@" not in parts.netloc and "token=" not in parts.query:
+        return url
+    query = re.sub(r"(^|&)token=[^&]*", r"\1token=***", parts.query)
+    netloc = parts.netloc.rpartition("@")[2]
+    return urlunsplit((parts.scheme, netloc, parts.path, query, parts.fragment))
+
+
+def with_token(url: str, token: str) -> str:
+    """Put a subscription token into the URL, where the desktop app keeps it."""
+    parts = urlsplit(url)
+    if "token" in dict(parse_qsl(parts.query)):
+        return url
+    param = f"token={quote(token, safe='-_.~')}"
+    query = f"{parts.query}&{param}" if parts.query else param
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, query, parts.fragment))
+
+
+def atomic_write_text(path: Path, content: str) -> None:
+    """Replace ``path`` in one step, keeping its mode and owner.
+
+    The file may belong to another application that reads it at any time, and
+    root must not turn a user's file into a root-owned one.
+    """
+    tmp = path.with_name(f".{path.name}.sbc-tmp")
+    st = path.stat() if path.exists() else None
+    tmp.write_text(content, encoding="utf-8")
+    os.chmod(tmp, st.st_mode & 0o777 if st else 0o600)
+    if st and sys.platform != "win32":
+        try:
+            os.chown(tmp, st.st_uid, st.st_gid)
+        except PermissionError:
+            pass
+    os.replace(tmp, path)
 
 
 def subscription_credentials(
@@ -88,5 +132,5 @@ def request_get(url: str, token: str) -> httpx.Response | None:
         response.raise_for_status()
         return response
     except Exception as e:
-        print(f"❌ Failed to get from {safe_url}: {e}")
+        print(f"❌ Failed to get from {redact_url(safe_url)}: {e}")
         return None

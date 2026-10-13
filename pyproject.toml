@@ -121,6 +121,9 @@ ignore = [
 
 isort = { combine-as-imports = true, split-on-trailing-comma = false }
 
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["ARG001"] # pytest fixtures are used by being requested
+
 # Avoid trying to fix flake8-bugbear (`B`) violations.
 unfixable = ["B"]
 
