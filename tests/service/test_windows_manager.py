@@ -189,3 +189,48 @@ def test_status_display(
 ) -> None:
     mock_commands(monkeypatch, state="SERVICE_RUNNING")
     assert manager.status() == "Service Running"
+
+
+def test_sync_points_an_older_service_at_the_profile_once(
+    manager: WindowsServiceManager, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """config.json could not become a link: the service is moved to the profile."""
+    legacy = manager.config.config_dir / "config.json"
+    legacy.write_text("{}", encoding="utf-8")
+    manager.config.config_file = manager.config.config_dir / "profiles" / "abc.json"
+    manager.config.legacy_config = legacy
+    run = mock_commands(monkeypatch)
+
+    manager.sync_service()
+
+    install = next(
+        call.args[0] for call in run.call_args_list if call.args[0][1] == "install"
+    )
+    assert str(manager.config.config_file) in install
+    assert not legacy.exists()
+    assert (manager.config.config_dir / "config.json.migrated").exists()
+
+
+def test_sync_is_a_noop_without_an_older_config(
+    manager: WindowsServiceManager, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager.config.legacy_config = None
+    run = mock_commands(monkeypatch)
+
+    manager.sync_service()
+
+    run.assert_not_called()
+
+
+def test_sync_failure_propagates_and_keeps_the_older_config(
+    manager: WindowsServiceManager, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    legacy = manager.config.config_dir / "config.json"
+    legacy.write_text("{}", encoding="utf-8")
+    manager.config.legacy_config = legacy
+    mock_commands(monkeypatch, fail="install")
+
+    with pytest.raises(subprocess.CalledProcessError):
+        manager.sync_service()
+
+    assert legacy.exists()

@@ -8,10 +8,13 @@ from ..service import SharedContext, get_context_obj
 from ..service.manager import create_service
 from .config import get_config
 from .serve import serve
+from .utils import redact_url
 
 __all__ = ["config"]
 
-SubUrlArg = Annotated[str, typer.Argument(help="Subscription URL")]
+SubUrlArg = Annotated[
+    StrOrNone, typer.Argument(help="Subscription URL, the saved one if omitted")
+]
 TokenOption = Annotated[
     StrOrNone,
     typer.Option(
@@ -40,7 +43,7 @@ def config_callback(ctx: typer.Context) -> None:
 
 @config.command("update")
 def config_update(
-    url: SubUrlArg,
+    url: SubUrlArg = None,
     token: TokenOption = None,
     restart: RestartServiceOption = False,
     dry_run: DryRunOption = False,
@@ -51,10 +54,13 @@ def config_update(
         print("❌ Failed to update configuration.")
         raise typer.Exit(1)
     if restart and not dry_run:
-        ensure_root()
         service = create_service(cfg)
+        if service.requires_root:
+            ensure_root()
         # init service
-        if not service.check_service():
+        if service.check_service():
+            service.sync_service()
+        else:
             service.create_service()
             print("⌛ Service created successfully.")
         service.restart()
@@ -71,7 +77,7 @@ def config_get(
     cfg = get_context_obj(ctx).config
     if subscription:
         if cfg.sub_url:
-            print(f"🔗 Current subscription URL: {cfg.sub_url}")
+            print(f"🔗 Current subscription URL: {redact_url(cfg.sub_url)}")
         else:
             print("❌ No subscription URL found.")
     else:
@@ -94,4 +100,4 @@ def config_show(ctx: typer.Context) -> None:
 def config_clear_cache(ctx: typer.Context) -> None:
     """Clean cache database"""
     ctx_obj = get_context_obj(ctx)
-    ctx_obj.config.clear_cache()
+    ctx_obj.service.clear_cache()
