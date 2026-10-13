@@ -23,11 +23,11 @@ maintainers = [{ name = "A.J.Zeller", email = "hello@atticux.me" }]
 dynamic = ["version"] # https://hatch.pypa.io/latest/config/metadata/#version
 dependencies = [
     "httpx>=0.28.1",
-    "plotext>=5.3.2",
+    "plotext>=5.3.2,<6",
     "prompt-toolkit>=3.0.50",
     "psutil>=6.1.1",
     "pydantic>=2.10.6",
-    "sing-box-bin>=1.12.12",
+    "sing-box-bin>=1.12.12,<1.14",
     "typer>=0.15.1",
 ]
 
