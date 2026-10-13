@@ -47,6 +47,7 @@ environments = ["sys_platform == 'win32'", "sys_platform == 'linux'"]
 
 [project.optional-dependencies]
 # optional deps for package installation
+desktop = ["grpcio>=1.60"] # drive the sing-box desktop app's daemon
 
 [dependency-groups]
 dev = [
@@ -61,6 +62,7 @@ dev = [
     "scipy-stubs>=1.15.2.1",
     "coverage>=7.7.1",
     "pytest-sugar>=1.0.0",
+    "grpcio>=1.60", # fake desktop daemon in tests
 ]
 
 [tool.hatch.version]

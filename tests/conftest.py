@@ -14,6 +14,15 @@ def config_path() -> None:
     return cfg_path
 
 
+@pytest.fixture(autouse=True)
+def no_desktop_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Never let the host's sing-box desktop app decide what a test sees."""
+    from sing_box_cli.service import desktop
+
+    monkeypatch.setattr(desktop, "DAEMON_SOCKET", tmp_path / "absent.socket")
+    monkeypatch.setattr(desktop, "DAEMON_UNIT", tmp_path / "absent.service")
+
+
 @pytest.fixture
 def make_settings_db() -> Callable[..., Path]:
     """Build (or extend) a copy of the sing-box desktop app's settings database."""

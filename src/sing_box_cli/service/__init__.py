@@ -5,9 +5,9 @@ import typer
 
 from ..common import ClearCacheOption, UpdateConfigOption, ensure_root
 from ..config.config import ConfigHandler
-from .manager import LinuxServiceManager, WindowsServiceManager
+from .manager import ServiceManager
 
-__all__ = ["service", "SharedContext", "get_context_obj"]
+__all__ = ["service", "SharedContext", "get_context_obj", "ensure_privileges"]
 
 
 service = typer.Typer(help="Service management commands")
@@ -16,20 +16,26 @@ service = typer.Typer(help="Service management commands")
 @dataclass
 class SharedContext:
     config: ConfigHandler
-    service: WindowsServiceManager | LinuxServiceManager
+    service: ServiceManager
 
 
 def get_context_obj(ctx: typer.Context) -> SharedContext:
     return cast(SharedContext, ctx.obj)
 
 
+def ensure_privileges(service: ServiceManager) -> None:
+    """Require root only for backends that manage a system service themselves."""
+    if service.requires_root:
+        ensure_root()
+
+
 @service.command("enable")
 def service_enable(ctx: typer.Context) -> None:
     """Create sing-box service, enable autostart and start service"""
-    ensure_root()
     ctx_obj = get_context_obj(ctx)
     config = ctx_obj.config
     service = ctx_obj.service
+    ensure_privileges(service)
     service.create_service()
     service.start()
     print("🔥 Service started.")
@@ -40,9 +46,9 @@ def service_enable(ctx: typer.Context) -> None:
 @service.command("disable")
 def service_disable(ctx: typer.Context) -> None:
     """Stop service, disable sing-box service autostart and remove service"""
-    ensure_root()
     ctx_obj = get_context_obj(ctx)
     service = ctx_obj.service
+    ensure_privileges(service)
     service.stop()
     service.disable()
     print("✋ Autostart disabled.")
@@ -55,11 +61,13 @@ def service_restart(
     purge: ClearCacheOption = False,
 ) -> None:
     """Restart sing-box service, update configuration if needed, create service if not exists"""
-    ensure_root()
     ctx_obj = get_context_obj(ctx)
     config = ctx_obj.config
     service = ctx_obj.service
-    if not service.check_service():
+    ensure_privileges(service)
+    if service.check_service():
+        service.sync_service()
+    else:
         service.create_service()
     if update:
         if config.update_config():
@@ -67,10 +75,13 @@ def service_restart(
         else:
             print("❌ Failed to update configuration.")
             raise typer.Exit(1)
-    service.stop()
-    if purge:
-        config.clear_cache()
-    service.start()
+    if service.hot_reload and not purge:
+        service.restart()
+    else:
+        service.stop()
+        if purge:
+            service.clear_cache()
+        service.start()
     print("🔥 Service restarted.")
     if config.api_base_url:
         print(f"🔌 Default API: {config.api_base_url}")
@@ -79,9 +90,9 @@ def service_restart(
 @service.command("stop")
 def service_stop(ctx: typer.Context) -> None:
     """Stop sing-box service"""
-    ensure_root()
     ctx_obj = get_context_obj(ctx)
     service = ctx_obj.service
+    ensure_privileges(service)
     service.stop()
     print("✋ Service stopped.")
 
@@ -89,8 +100,8 @@ def service_stop(ctx: typer.Context) -> None:
 @service.command("status")
 def service_status(ctx: typer.Context) -> None:
     """Check service status"""
-    ensure_root()
     ctx_obj = get_context_obj(ctx)
     service = ctx_obj.service
+    ensure_privileges(service)
     status = service.status()
     print(f"🏃 Service status: {status}")

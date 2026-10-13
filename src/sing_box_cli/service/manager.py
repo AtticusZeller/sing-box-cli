@@ -5,6 +5,11 @@ from ..config.config import ConfigHandler, run_args, run_cmd
 
 
 class ServiceManager:
+    # Whether service commands must run as root/Administrator.
+    requires_root = True
+    # Whether start() on a running service reloads it, so restart needs no stop.
+    hot_reload = False
+
     def __init__(self, config: ConfigHandler) -> None:
         self.config = config
 
@@ -31,6 +36,13 @@ class ServiceManager:
 
     def version(self) -> str:
         raise NotImplementedError()
+
+    def sync_service(self) -> None:
+        """Make an existing service run the current configuration file."""
+
+    def clear_cache(self) -> None:
+        """Remove the cache database, the service is expected to be stopped."""
+        self.config.clear_cache()
 
 
 class WindowsServiceManager(ServiceManager):
