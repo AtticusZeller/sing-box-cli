@@ -118,6 +118,7 @@ Preview an update before applying it:
 ```bash
 sbc config update https://sub.example.com/alice.json --dry-run
 sbc config update https://sub.example.com/alice.json --restart
+sbc config update --restart   # no URL: the saved subscription
 ```
 
 `--dry-run` downloads and validates the configuration, then shows its diff without
@@ -137,6 +138,64 @@ sbc config get --subscription  # subscription URL
 ```
 
 `config show` and `config show-sub` remain available as hidden compatibility aliases.
+
+### Where it is kept
+
+sbc keeps its configuration the way the official sing-box desktop app does, in one
+place, whether the app is installed or not:
+
+```
+<config dir>/settings.db           profiles and the selected one
+<config dir>/profiles/<id>.json    the selected profile's sing-box configuration
+```
+
+The config directory is `~/.config/sing-box` on Linux. The selected profile is the
+configuration and its subscription URL is the subscription. A subscription token is
+stored inside that URL (`?token=...`), as the app stores it. It is still sent as a
+bearer token and never printed.
+
+Without the app, sbc creates this store itself with the app's schema, so the app
+takes it over unchanged if it is installed later. Files of older versions are
+imported the first time sbc runs anything but `config get` or a `--dry-run`, which
+create nothing:
+
+- `config.json` becomes the profile. It stays as a link to the profile, so a
+  service created before keeps running the same file. The previous file is kept as
+  `config.json.migrated`.
+- The URL and token of `app_config.json` become the subscription. The file is kept
+  as `app_config.json.migrated`.
+- A service created before follows the profile: `service restart` and
+  `config update --restart` point it at the profile when it points elsewhere.
+
+A configuration is written exactly as downloaded. The diff, and whether there is a
+change at all, ignore formatting.
+
+## sing-box desktop app (Linux)
+
+When the official sing-box desktop app is installed, sbc drives its daemon instead
+of a systemd service of its own, and the app's `settings.db` is the store. The app
+counts as installed when its `sing-box-daemon.service` exists.
+
+```bash
+uv tool install 'sing-box-cli[desktop]'   # grpcio is only needed for this
+sbc service restart --update              # sudo works too, it acts as the invoking user
+```
+
+| Command | With the desktop app |
+|---|---|
+| `service status/stop/restart/enable` | start, stop and reload the daemon's core. `restart` reloads in place, without a stop in between |
+| `service disable` | stops the core. Autostart stays with the app's `sing-box-daemon.service` |
+| `config update [URL]`, `--update` | refresh the profile selected in the app and record the refresh there. A new URL is saved to that profile once it downloads fine |
+| `--clear-cache`, `config clear_cache` | clear the daemon's working directory, like "clear data" in the app |
+| `stats/conns/proxy/logs` | unchanged, the default API address comes from the profile |
+| `run` | refused, the daemon runs the core |
+
+The core is started with the start options set in the app (OOM killer, memory
+limit, power report). The app's store is never created or repaired from here: if it
+cannot be read, or the daemon is stopped, sbc says so instead of working around it.
+
+- A local profile of the app has no subscription, `config update URL` is refused for it.
+- The app may show an old subscription URL until its profile list is reloaded.
 
 ## Serve private GitHub configurations
 
