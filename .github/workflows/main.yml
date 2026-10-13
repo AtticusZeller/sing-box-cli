@@ -104,7 +104,7 @@ jobs:
         run: uv run git-cliff -vv --latest --strip header --github-token "$ATTICUS_PAT" -o CHANGES.md
 
       - name: Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           body_path: CHANGES.md
           token: ${{ secrets.GITHUB_TOKEN }}
