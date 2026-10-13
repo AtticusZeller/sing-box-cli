@@ -1117,11 +1117,11 @@ wheels = [
 
 [[package]]
 name = "sing-box-bin"
-version = "1.14.3"
+version = "1.13.21"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/98/30/a8ad752e47ee6671fedb9978a99522cb313d8678a96b617ded3dd6079b71/sing_box_bin-1.14.3.tar.gz", hash = "sha256:3c19600ba488752481f25d23fec93c9fefc8de900ff353da5bc78e723f15700c", size = 47290357, upload-time = "2026-10-10T03:20:12.092Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/39/5e/fe61230fb0fb2e92afe91e5c513203ed6998d334a1d3a682826681349677/sing_box_bin-1.13.21.tar.gz", hash = "sha256:8bda2e87934e1f64d1bdabad72face3f82f21496657286a2600956c4ef2b2abf", size = 35273004, upload-time = "2026-08-31T02:18:25.806Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e8/80/eb3667c52f566e090486dbe87101cc9ea7a95b11521a592a59e22540e4e2/sing_box_bin-1.14.3-py3-none-any.whl", hash = "sha256:046866e9a20b846a915e1edc7b47147e134b40a57b72ce8117e8a1327a009d4f", size = 46385274, upload-time = "2026-10-10T03:20:07.632Z" },
+    { url = "https://files.pythonhosted.org/packages/b9/ea/04c1b29cf38b82d1d21e8437320cd2715e6d16be19e2a93cafb457c35b40/sing_box_bin-1.13.21-py3-none-any.whl", hash = "sha256:287ddc418cc0ecac224c4b4be1f141cd24a8f438ac3e33d45715741e63e95ec0", size = 34285278, upload-time = "2026-08-31T02:18:22.049Z" },
 ]
 
 [[package]]
@@ -1160,7 +1160,7 @@ requires-dist = [
     { name = "prompt-toolkit", specifier = ">=3.0.50" },
     { name = "psutil", specifier = ">=6.1.1" },
     { name = "pydantic", specifier = ">=2.10.6" },
-    { name = "sing-box-bin", specifier = ">=1.12.12" },
+    { name = "sing-box-bin", specifier = ">=1.12.12,<1.14" },
     { name = "typer", specifier = ">=0.15.1" },
 ]
 
