@@ -47,8 +47,11 @@ def run(
     purge: ClearCacheOption = False,
 ) -> None:
     """Run sing-box if host's service unavailable or debug mode."""
-    ensure_root()
     cfg = get_context_obj(ctx).config
+    if cfg.external_config is True:
+        print("❌ The sing-box desktop app runs the core, use `sbc service restart`.")
+        raise typer.Exit(1)
+    ensure_root()
 
     if update:
         if cfg.update_config():

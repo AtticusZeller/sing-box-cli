@@ -5,6 +5,11 @@ from ..config.config import ConfigHandler, run_args, run_cmd
 
 
 class ServiceManager:
+    # Whether service commands must run as root/Administrator.
+    requires_root = True
+    # Whether start() on a running service reloads it, so restart needs no stop.
+    hot_reload = False
+
     def __init__(self, config: ConfigHandler) -> None:
         self.config = config
 
@@ -31,6 +36,13 @@ class ServiceManager:
 
     def version(self) -> str:
         raise NotImplementedError()
+
+    def sync_service(self) -> None:
+        """Make an existing service run the current configuration file."""
+
+    def clear_cache(self) -> None:
+        """Remove the cache database, the service is expected to be stopped."""
+        self.config.clear_cache()
 
 
 class WindowsServiceManager(ServiceManager):
@@ -65,6 +77,20 @@ class WindowsServiceManager(ServiceManager):
             check=True,
             stdout=subprocess.DEVNULL,
         )
+
+    def sync_service(self) -> None:
+        """Point a service installed by an older version at the profile, once.
+
+        The configuration file is the selected profile now. Where config.json could
+        not be turned into a link to it, the service still runs that file. The
+        helper's install updates an existing service in place, after which the old
+        file is put aside. A failure propagates like any other helper error.
+        """
+        legacy = self.config.legacy_config
+        if legacy is None:
+            return
+        self.create_service()
+        legacy.replace(legacy.with_name("config.json.migrated"))
 
     def check_service(self) -> bool:
         result = subprocess.run(
@@ -142,7 +168,12 @@ class LinuxServiceManager(ServiceManager):
             1. https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html#Type
             2. https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html#Scheduling
         """
-        service_content = f"""
+        self.service_file.write_text(self._unit_content())
+        subprocess.run(["systemctl", "daemon-reload"])
+        subprocess.run(["systemctl", "enable", self.service_name])
+
+    def _unit_content(self) -> str:
+        return f"""
 [Unit]
 Description=sing-box service
 Documentation=https://sing-box.sagernet.org
@@ -166,9 +197,15 @@ ExecReload=/bin/kill -HUP $MAINPID
 [Install]
 WantedBy=multi-user.target
 """
-        self.service_file.write_text(service_content)
-        subprocess.run(["systemctl", "daemon-reload"])
-        subprocess.run(["systemctl", "enable", self.service_name])
+
+    def sync_service(self) -> None:
+        """The configuration file is the selected profile, rewrite a unit that differs."""
+        if (
+            self.service_file.exists()
+            and self.service_file.read_text() != self._unit_content()
+        ):
+            self.service_file.write_text(self._unit_content())
+            subprocess.run(["systemctl", "daemon-reload"])
 
     def check_service(self) -> bool:
         return self.service_file.exists()
@@ -200,11 +237,12 @@ WantedBy=multi-user.target
         return result.stdout.decode("utf-8").strip()
 
 
-def create_service(
-    config: ConfigHandler,
-) -> WindowsServiceManager | LinuxServiceManager:
-    return (
-        WindowsServiceManager(config)
-        if config.is_windows
-        else LinuxServiceManager(config)
-    )
+def create_service(config: ConfigHandler) -> ServiceManager:
+    if config.is_windows:
+        return WindowsServiceManager(config)
+    if config.external_config is True:
+        # Lazy import keeps grpc (optional) out of every machine without the desktop app.
+        from .desktop import DesktopDaemonServiceManager
+
+        return DesktopDaemonServiceManager(config)
+    return LinuxServiceManager(config)

@@ -1,13 +1,15 @@
 import importlib
 import json
+import sqlite3
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
 import httpx
 import pytest
 from typer.testing import CliRunner
 
-from sing_box_cli.config.config import ConfigHandler, ConfigModel, SingBoxConfig
+from sing_box_cli.config.config import ConfigHandler, SingBoxConfig
 
 OLD_URL = "https://sub.example.com/old.json"
 NEW_URL = "https://sub.example.com/new.json"
@@ -37,6 +39,23 @@ def seed_configs(directory: Path) -> None:
         json.dumps({"subscription_url": OLD_URL, "token": "old-token"}),
         encoding="utf-8",
     )
+
+
+def stored(directory: Path) -> tuple[dict[str, Any], str | None]:
+    """The selected profile of the store: (its configuration, its subscription)."""
+    db = sqlite3.connect(directory / "settings.db")
+    try:
+        (data,) = db.execute(
+            "SELECT data FROM preferences WHERE name = 'selected_profile_id'"
+        ).fetchone()
+        profile_id = json.loads(bytes(data))
+        (url,) = db.execute(
+            "SELECT remote_url FROM profiles WHERE id = ?", (profile_id,)
+        ).fetchone()
+    finally:
+        db.close()
+    content = (directory / "profiles" / f"{profile_id}.json").read_text()
+    return json.loads(content), url
 
 
 @pytest.mark.parametrize("existing", [False, True])
@@ -72,7 +91,8 @@ def test_dry_run_only_previews(
     monkeypatch.setattr(ConfigHandler, "__init__", init)
     forbidden = MagicMock(side_effect=AssertionError("Dry run must not mutate state"))
     monkeypatch.setattr(ConfigHandler, "init_directories", forbidden)
-    monkeypatch.setattr(ConfigModel, "save", forbidden)
+    for write in ("atomic_write_text", "init_store", "update_profile_record"):
+        monkeypatch.setattr(handler, write, forbidden)
     monkeypatch.setattr(handler.shutil, "chown", forbidden)
     monkeypatch.setattr(cli, "create_service", forbidden)
     monkeypatch.setattr(cli, "ensure_root", forbidden)
@@ -152,13 +172,11 @@ def test_normal_update_saves_config_and_subscription(
         main.app, ["config", "update", NEW_URL, "--token", "new-token"]
     )
     assert result.exit_code == 0, result.output
-    assert json.loads((client_directory / "config.json").read_text())["log"] == {
-        "level": "debug"
-    }
-    assert json.loads((client_directory / "app_config.json").read_text()) == {
-        "subscription_url": NEW_URL,
-        "token": "new-token",
-    }
+    content, subscription = stored(client_directory)
+    assert content["log"] == {"level": "debug"}
+    # kept the way the desktop app keeps it: one URL carrying its token
+    assert subscription == NEW_URL + "?token=new-token"
+    assert not (client_directory / "app_config.json").exists()
 
 
 @pytest.mark.parametrize(
@@ -220,8 +238,11 @@ def test_update_extracts_url_token_before_saved_token_and_logging(
     assert result.exit_code == 0, result.output
     assert "url-subscription-token" not in result.output
     request.assert_called_once_with(NEW_URL, "url-subscription-token")
-    saved = json.loads((client_directory / "app_config.json").read_text())
-    assert saved == {
-        "subscription_url": OLD_URL if dry_run else NEW_URL,
-        "token": "old-token" if dry_run else "url-subscription-token",
-    }
+    if dry_run:
+        saved = json.loads((client_directory / "app_config.json").read_text())
+        assert saved == {"subscription_url": OLD_URL, "token": "old-token"}
+        assert not (client_directory / "settings.db").exists()
+    else:
+        content, subscription = stored(client_directory)
+        assert content["log"] == {"level": "debug"}
+        assert subscription == NEW_URL + "?token=url-subscription-token"
