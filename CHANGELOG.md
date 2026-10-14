@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.1.9 - 2026-10-14
+
+### 🚀 Features
+
+- *(service)* Drive the official sing-box desktop app when it is installed (Linux): `service` commands, `version` and `config clear_cache` go through its daemon instead of a systemd service of sbc's own. Install with `uv tool install 'sing-box-cli[desktop]'`, which adds grpcio
+- *(service)* With the desktop app, `service restart` reloads the running core in place, `--clear-cache` clears the daemon's data like "clear data" in the app, and the core starts with the start options set in the app. `sbc run` is refused, the app runs the core
+- *(config)* Keep the configuration the way the desktop app does, with or without the app: `settings.db` holds the profiles and the selected one, each profile is `profiles/<id>.json`. With the app installed, sbc uses the app's own store and selected profile
+- *(config)* `config update` without a URL refreshes the saved subscription. A new subscription is saved only once it downloads fine
+- *(config)* `sudo sbc` acts as the invoking user for the store, so no root-owned files appear in the configuration directory
+
+### 🐛 Bug Fixes
+
+- *(service)* `service enable`, `service restart` and `config update --restart` no longer report success when systemd cannot start the service or the core exits right after starting; they end with exit code 1
+- *(service)* With the desktop app installed, sbc no longer sets up a systemd service of its own that ran the app's `/usr/bin/sing-box` instead of the core
+
+### Migration
+
+The first command after the upgrade (other than `config get` or a `--dry-run`) imports the files of older versions:
+
+- `config.json` becomes the selected profile and stays as a link to it, so an existing service keeps running. The previous file is kept as `config.json.migrated`. The next `service restart` or `config update --restart` points the service at the profile.
+- The subscription URL and token of `app_config.json` become the profile's subscription, with the token inside the URL as the desktop app stores it. It is still sent as a bearer token and never printed. The file is kept as `app_config.json.migrated`.
+
 ## 0.1.8 - 2026-10-12
 
 ### 🐛 Bug Fixes
