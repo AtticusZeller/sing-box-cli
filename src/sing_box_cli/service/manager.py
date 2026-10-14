@@ -1,5 +1,8 @@
 import subprocess
+import time
 from pathlib import Path
+
+import typer
 
 from ..config.config import ConfigHandler, run_args, run_cmd
 
@@ -173,14 +176,35 @@ WantedBy=multi-user.target
     def check_service(self) -> bool:
         return self.service_file.exists()
 
+    def _bring_up(self, action: str) -> None:
+        """Start or restart, ending the command unless the service is running after.
+
+        The unit is Type=exec: systemd reports success once the core is executed. A
+        core that exits right away, as on a configuration it rejects, is only seen a
+        moment later.
+        """
+        if subprocess.run(["systemctl", action, self.service_name]).returncode != 0:
+            print(f"❌ Failed to {action} service.")
+            raise typer.Exit(1)
+        time.sleep(1)
+        active = subprocess.run(
+            ["systemctl", "is-active", "--quiet", self.service_name]
+        )
+        if active.returncode != 0:
+            print(
+                "❌ Service exited right after starting, "
+                f"see: journalctl -u {self.service_name} -e"
+            )
+            raise typer.Exit(1)
+
     def start(self) -> None:
-        subprocess.run(["systemctl", "start", self.service_name])
+        self._bring_up("start")
 
     def stop(self) -> None:
         subprocess.run(["systemctl", "stop", self.service_name])
 
     def restart(self) -> None:
-        subprocess.run(["systemctl", "restart", self.service_name])
+        self._bring_up("restart")
 
     def status(self) -> str:
         try:
