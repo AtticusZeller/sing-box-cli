@@ -32,10 +32,10 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage      = "https://github.com/aittcuszz/sing-box-service"
-Issues        = "https://github.com/atticuszz/sing-box-service/issues"
-documentation = "https://atticuszz.github.io/sing-box-service/"
-Changelog     = "https://github.com/atticuszz/sing-box-service/blob/main/CHANGELOG.md"
+Homepage      = "https://github.com/AtticusZeller/sing-box-cli"
+Issues        = "https://github.com/AtticusZeller/sing-box-cli/issues"
+documentation = "https://github.com/AtticusZeller/sing-box-cli#readme"
+Changelog     = "https://github.com/AtticusZeller/sing-box-cli/blob/main/CHANGELOG.md"
 
 [project.scripts] # build-backend config needed
 sing-box-cli = "sing_box_cli:main" # equal to from python import main; then run main()
@@ -141,8 +141,8 @@ skip-magic-trailing-comma = true
 
 ## VCS
 [tool.git-cliff.remote.github]
-owner = "atticuszeller"
-repo  = "sing-box-service"
+owner = "AtticusZeller"
+repo  = "sing-box-cli"
 
 [tool.git-cliff.changelog]
 # template for the changelog header
@@ -176,7 +176,7 @@ footer = """
 trim = true
 # postprocessors
 # postprocessors = [
-#   { pattern = '<REPO>', replace = "https://github.com/atticuszz/sing-box-service" }, # replace repository URL
+#   { pattern = '<REPO>', replace = "https://github.com/AtticusZeller/sing-box-cli" }, # replace repository URL
 # ]
 # render body even when there are no releases to process
 render_always = true
@@ -232,7 +232,7 @@ tag                    = true
 sign_tags              = false
 tag_name               = "v{new_version}"
 tag_message            = "chore(release): {current_version} → {new_version}"
-allow_dirty            = true                                                  # git-cliff first then bump patch
+allow_dirty            = true                                                  # CHANGELOG.md is edited before the bump
 commit                 = true
 message                = "chore(release): {current_version} → {new_version}"
 commit_args            = ""
