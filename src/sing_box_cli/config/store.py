@@ -231,6 +231,9 @@ def init_store(config_dir: Path) -> Profile:
     try:
         with invoking_user():
             (config_dir / "profiles").mkdir(parents=True, exist_ok=True)
+            if not path.exists():
+                # private like the app's own: the subscription URL carries a token
+                path.touch(mode=0o600)
             with closing(sqlite3.connect(path, timeout=5)) as db, db:
                 db.executescript(_SCHEMA)
                 profile_id = _usable_selection(db, config_dir)

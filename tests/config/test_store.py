@@ -82,6 +82,17 @@ def test_first_use_creates_an_empty_local_profile(tmp_path: Path) -> None:
     assert _names(directory) == ["profiles", "settings.db"]
 
 
+@posix_only
+def test_new_store_is_private(tmp_path: Path) -> None:
+    """The subscription URL in it carries a token, the app keeps its own 0600 too."""
+    _seed_older_version(tmp_path / "sing-box")
+
+    profile = init_store(tmp_path / "sing-box")
+
+    for path in (tmp_path / "sing-box" / "settings.db", profile.path):
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
 def test_store_is_opened_not_recreated(tmp_path: Path) -> None:
     first = init_store(tmp_path)
     second = init_store(tmp_path)
