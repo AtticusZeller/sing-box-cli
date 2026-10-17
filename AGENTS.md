@@ -19,8 +19,8 @@ uv run mypy src --platform win32    # CI also runs on Windows
 Python 3.11–3.14, typer (rich), httpx, pydantic, plotext, sing-box-bin (the core),
 SQLite (stdlib), optional `grpcio` (`[desktop]` extra), Go for `windows-service/`,
 hatchling with a build hook (`hatch_build.py`) that compiles the Windows helper into
-the wheel. `plotext<6` and `sing-box-bin<1.14` are deliberate caps (#31): do not merge
-Dependabot PRs that lift them without checking why.
+the wheel. `plotext<6` is a deliberate cap (#31): do not merge Dependabot PRs that
+lift it without checking why. `sing-box-bin>=1.13` has no upper version bound.
 
 ## Layout and conventions
 

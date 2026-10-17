@@ -27,7 +27,7 @@ dependencies = [
     "prompt-toolkit>=3.0.50",
     "psutil>=6.1.1",
     "pydantic>=2.10.6",
-    "sing-box-bin>=1.12.12,<1.14",
+    "sing-box-bin>=1.13",
     "typer>=0.15.1",
 ]
 
