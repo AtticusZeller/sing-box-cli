@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from sing_box_cli.service import desktop, manager
+from sing_box_cli.service.desktop_windows import WindowsDesktopServiceManager
 from sing_box_cli.service.manager import (
     LinuxServiceManager,
     WindowsServiceManager,
@@ -47,6 +48,13 @@ def test_windows_keeps_its_own_backend() -> None:
     assert type(service) is WindowsServiceManager
     assert service.requires_root
     assert not service.hot_reload
+
+
+def test_windows_desktop_never_selects_the_standalone_service() -> None:
+    service = create_service(_config(is_windows=True, external_config=True))
+
+    assert type(service) is WindowsDesktopServiceManager
+    assert not service.requires_root
 
 
 def test_existing_unit_follows_the_profile_path(

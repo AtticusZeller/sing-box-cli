@@ -79,9 +79,14 @@ def desktop_daemon_available() -> bool:
 def desktop_app_installed() -> bool:
     """Whether the desktop app is on this machine, running or not.
 
-    Used to pick this backend, so a stopped daemon is reported instead of falling
-    back to a systemd unit of our own that would fight it. Two stats, no imports.
+    Used to pick the desktop backend, so a stopped daemon is reported instead of
+    creating a competing service. Windows uses the installed service/installer
+    registry keys; Linux uses the unit/socket. Neither loads grpc.
     """
+    if sys.platform == "win32":
+        from .desktop_windows import desktop_app_installed as windows_app_installed
+
+        return windows_app_installed()
     return DAEMON_UNIT.exists() or desktop_daemon_available()
 
 

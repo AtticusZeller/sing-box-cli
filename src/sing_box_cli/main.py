@@ -49,7 +49,8 @@ def run(
     """Run sing-box if host's service unavailable or debug mode."""
     cfg = get_context_obj(ctx).config
     if cfg.external_config is True:
-        print("❌ The sing-box desktop app runs the core, use `sbc service restart`.")
+        action = "the desktop app" if cfg.is_windows else "`sbc service restart`"
+        print(f"❌ The sing-box desktop app runs the core, use {action}.")
         raise typer.Exit(1)
     ensure_root()
 

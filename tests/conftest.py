@@ -17,10 +17,11 @@ def config_path() -> None:
 @pytest.fixture(autouse=True)
 def no_desktop_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Never let the host's sing-box desktop app decide what a test sees."""
-    from sing_box_cli.service import desktop
+    from sing_box_cli.service import desktop, desktop_windows
 
     monkeypatch.setattr(desktop, "DAEMON_SOCKET", tmp_path / "absent.socket")
     monkeypatch.setattr(desktop, "DAEMON_UNIT", tmp_path / "absent.service")
+    monkeypatch.setattr(desktop_windows, "_registry_values", lambda *_: None)
 
 
 @pytest.fixture

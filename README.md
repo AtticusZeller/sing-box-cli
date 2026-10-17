@@ -149,7 +149,9 @@ place, whether the app is installed or not:
 <config dir>/profiles/<id>.json    the selected profile's sing-box configuration
 ```
 
-The config directory is `~/.config/sing-box` on Linux. The selected profile is the
+The config directory is `~/.config/sing-box` on Linux and `%APPDATA%/sing-box` on
+Windows. On Windows, an `ApplicationDataDirectory` registered by the official
+desktop installer (layout version 2) takes precedence. The selected profile is the
 configuration and its subscription URL is the subscription. A subscription token is
 stored inside that URL (`?token=...`), as the app stores it. It is still sent as a
 bearer token and never printed.
@@ -170,7 +172,9 @@ create nothing:
 A configuration is written exactly as downloaded. The diff, and whether there is a
 change at all, ignore formatting.
 
-## sing-box desktop app (Linux)
+## sing-box desktop app
+
+### Linux
 
 When the official sing-box desktop app is installed, sbc drives its daemon instead
 of a systemd service of its own, and the app's `settings.db` is the store. The app
@@ -196,6 +200,29 @@ cannot be read, or the daemon is stopped, sbc says so instead of working around 
 
 - A local profile of the app has no subscription, `config update URL` is refused for it.
 - The app may show an old subscription URL until its profile list is reloaded.
+
+### Windows desktop app
+
+On Windows, sbc detects the desktop app through its installed `sing-box-daemon`
+service or its `HKLM\SOFTWARE\SagerNet\sing-box` installation metadata, including
+when the daemon is stopped. It shares the app's selected profile and subscription:
+`config get`, `config update [URL]`, and `--dry-run` work as on Linux, and
+`stats/conns/proxy/logs` read the API settings from that profile. Missing or invalid
+app settings are reported without creating or repairing a store.
+
+Windows daemon control has an upstream restriction: the daemon authenticates the
+installed, signed desktop application and its worker, including their parent
+process relationship. Its named pipe cannot be called by a Python CLI. Therefore
+`service` commands, `config update --restart` and cache clearing report this
+limitation; use the desktop app to reload after `sbc config update`, or to clear
+data. `run` is also refused to prevent a second core competing with the app.
+The standalone Go service helper is used only when the desktop app is absent.
+The `[desktop]` extra does not remove this Windows restriction.
+
+These conventions follow the official app's
+[installation layout](https://github.com/SagerNet/sing-box-for-desktop/blob/main/src/main/installationLayout.ts)
+and the daemon's
+[Windows authentication](https://github.com/SagerNet/sing-box/blob/testing/experimental/boxdd/peer_windows.go).
 
 ## Serve private GitHub configurations
 

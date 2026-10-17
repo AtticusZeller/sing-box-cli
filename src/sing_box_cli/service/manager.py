@@ -262,11 +262,15 @@ WantedBy=multi-user.target
 
 
 def create_service(config: ConfigHandler) -> ServiceManager:
-    if config.is_windows:
-        return WindowsServiceManager(config)
     if config.external_config is True:
+        if config.is_windows:
+            from .desktop_windows import WindowsDesktopServiceManager
+
+            return WindowsDesktopServiceManager(config)
         # Lazy import keeps grpc (optional) out of every machine without the desktop app.
         from .desktop import DesktopDaemonServiceManager
 
         return DesktopDaemonServiceManager(config)
+    if config.is_windows:
+        return WindowsServiceManager(config)
     return LinuxServiceManager(config)

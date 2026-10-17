@@ -75,7 +75,7 @@ def atomic_write_text(path: Path, content: str) -> None:
     """
     tmp = path.with_name(f".{path.name}.sbc-tmp")
     st = path.stat() if path.exists() else None
-    tmp.write_text(content, encoding="utf-8")
+    tmp.write_text(content, encoding="utf-8", newline="")
     os.chmod(tmp, st.st_mode & 0o777 if st else 0o600)
     if st and sys.platform != "win32":
         try:

@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## unreleased
+
+### Added
+
+- *(config)* Share the official Windows desktop app's selected profile and subscription, including custom application data directories registered by its installer. Configuration updates, previews and Clash API views use the same store as the app
+
+### Fixed
+
+- *(service)* Detect the Windows desktop app even when its daemon is stopped and prevent a competing standalone service. Report the upstream signed-application authentication restriction for service control and cache clearing; reload through the desktop app after `sbc config update`
+- *(config)* Preserve downloaded configuration line endings on Windows instead of converting LF to CRLF
+
 ## 0.1.10 - 2026-10-17
 
 ### Changed

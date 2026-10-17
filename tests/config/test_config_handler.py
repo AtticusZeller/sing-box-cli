@@ -3,11 +3,10 @@
 import importlib
 import json
 import os
-import socket
 import sqlite3
 import stat
 import sys
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -35,9 +34,14 @@ linux_only = pytest.mark.skipif(
 posix_only = pytest.mark.skipif(os.name == "nt", reason="needs links")
 
 
-@pytest.fixture
-def config_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+@pytest.fixture(params=[False, True], ids=["linux-config", "windows-config"])
+def config_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+) -> Path:
     directory = tmp_path / "sing-box"
+    monkeypatch.setattr(
+        config_module.ConfigHandler, "is_windows", property(lambda self: request.param)
+    )
     monkeypatch.setenv("USER", "tester")
     monkeypatch.delenv("SUDO_USER", raising=False)
     # where the config directory comes from, on Linux and on Windows
@@ -49,15 +53,9 @@ def config_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 @pytest.fixture
-def daemon_socket(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
-    """The sing-box desktop app is installed and its daemon is listening."""
-    if sys.platform != "linux":
-        pytest.skip("the sing-box desktop app backend is Linux only")
-    path = tmp_path / "d.sock"
-    with socket.socket(socket.AF_UNIX) as sock:
-        sock.bind(str(path))
-        monkeypatch.setattr(desktop, "DAEMON_SOCKET", path)
-        yield path
+def installed_app(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Profile ownership is independent of the platform's daemon transport."""
+    monkeypatch.setattr(desktop, "desktop_app_installed", lambda: True)
 
 
 @pytest.fixture
@@ -100,7 +98,7 @@ def _snapshot(directory: Path) -> dict[str, bytes | str]:
 # ============================================================ desktop app installed
 @pytest.fixture
 def app(
-    config_dir: Path, make_settings_db: SettingsDb, daemon_socket: Path
+    config_dir: Path, make_settings_db: SettingsDb, installed_app: None
 ) -> tuple[Path, Path]:
     """A desktop app with one selected remote profile: (profile file, settings.db)."""
     (config_dir / "profiles").mkdir(parents=True)
@@ -130,8 +128,9 @@ def test_profile_and_subscription_come_from_the_app(
     assert handler.update_config()  # no URL: the app's own one
 
     assert requested == [(APP_URL_BARE, "s3cret")]
-    assert profile.read_text() == NEW  # byte for byte
-    assert stat.S_IMODE(profile.stat().st_mode) == 0o600
+    assert profile.read_bytes() == NEW.encode("utf-8")  # no CRLF conversion on Windows
+    if os.name != "nt":
+        assert stat.S_IMODE(profile.stat().st_mode) == 0o600
     assert other.read_text() == "{}"
     assert not list((config_dir / "profiles").glob(".*"))
     [(_, _, url, updated)] = _profiles(db_path)
@@ -246,7 +245,7 @@ def test_dry_run_changes_nothing_in_the_app(
     assert _profiles(db_path) == [("aaa", "remote", APP_URL, None)]
 
 
-@pytest.mark.usefixtures("daemon_socket")
+@pytest.mark.usefixtures("installed_app")
 def test_local_profile_of_the_app_has_no_subscription(
     config_dir: Path,
     make_settings_db: SettingsDb,
@@ -269,7 +268,7 @@ def test_local_profile_of_the_app_has_no_subscription(
     assert profile.read_text() == OLD
 
 
-@pytest.mark.usefixtures("daemon_socket")
+@pytest.mark.usefixtures("installed_app")
 def test_unreadable_app_settings_are_an_error_not_a_guess(
     config_dir: Path, served: Serve, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -301,7 +300,7 @@ def test_unreadable_app_settings_are_an_error_not_a_guess(
     assert _snapshot(config_dir) == before
 
 
-@pytest.mark.usefixtures("daemon_socket")
+@pytest.mark.usefixtures("installed_app")
 def test_no_selected_profile_is_an_error(
     config_dir: Path, make_settings_db: SettingsDb, capsys: pytest.CaptureFixture[str]
 ) -> None:

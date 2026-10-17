@@ -87,6 +87,14 @@ class ConfigHandler:
             if self.is_windows
             else Path(f"~{self.user}/.config/sing-box").expanduser()
         )
+        if self.is_windows:
+            from ..service.desktop_windows import application_data_directory
+
+            try:
+                self._config_dir = application_data_directory(self._config_dir)
+            except SettingsError as e:
+                print(f"❌ {e}")
+                raise typer.Exit(1) from e
         # Everything lives in the profile store (see config.store): the selected profile
         # is the configuration and its subscription URL is the subscription. With the
         # sing-box desktop app installed the store is the app's: it is only read, and an
@@ -109,12 +117,14 @@ class ConfigHandler:
         print(self)
 
     def _detect_desktop_app(self) -> bool:
-        if self.is_windows:
-            return False
         # Lazy import: the service package imports this module.
         from ..service.desktop import desktop_app_installed
 
-        return desktop_app_installed()
+        try:
+            return desktop_app_installed()
+        except SettingsError as e:
+            print(f"❌ {e}")
+            raise typer.Exit(1) from e
 
     def _load_config_file(self) -> None:
         # never read or written without a profile, see _require_profile()
@@ -407,7 +417,7 @@ class ConfigHandler:
     def __str__(self) -> str:
         """Return a string representation of the configuration."""
         if self._desktop_app:
-            return "🔧 Using sing-box desktop daemon\n" + (
+            return "🔧 Using sing-box desktop app\n" + (
                 f"📄 Using configuration: {self._profile.path}"
                 if self._profile
                 else f"⚠️ {self._profile_error}"
