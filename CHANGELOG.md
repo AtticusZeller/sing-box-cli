@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.1.10 - 2026-10-17
+
+### Changed
+
+- *(deps)* Allow `sing-box-bin>=1.13` without an upper version bound and upgrade the locked core from 1.13.21 to 1.14.3
+
 ## 0.1.9 - 2026-10-14
 
 ### 🚀 Features
