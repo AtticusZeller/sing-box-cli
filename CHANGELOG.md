@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## unreleased
+
+### Fixed
+
+- *(service)* Restore `sbc version` with the Windows desktop app by querying the installed daemon executable's read-only version command. No private daemon RPC or Clash API is needed, and the core itself may be stopped
+
 ## 0.1.11 - 2026-10-17
 
 ### Added

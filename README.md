@@ -210,6 +210,10 @@ when the daemon is stopped. It shares the app's selected profile and subscriptio
 `stats/conns/proxy/logs` read the API settings from that profile. Missing or invalid
 app settings are reported without creating or repairing a store.
 
+`sbc version` reads the version from the running daemon service's executable using
+its read-only `version` command. The core itself may be stopped and the Clash API
+may be disabled; no daemon RPC or administrator elevation is needed.
+
 Windows daemon control has an upstream restriction: the daemon authenticates the
 installed, signed desktop application and its worker, including their parent
 process relationship. Its named pipe cannot be called by a Python CLI. Therefore

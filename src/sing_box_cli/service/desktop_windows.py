@@ -6,8 +6,11 @@ that private named-pipe API. Share the profile store, but never start a competin
 SCM service or claim that a desktop service operation succeeded.
 """
 
+import subprocess
 import sys
 from pathlib import Path
+
+import psutil
 
 from ..config.store import SettingsError
 from .desktop import DesktopDaemonError, DesktopDaemonServiceManager
@@ -99,3 +102,37 @@ class WindowsDesktopServiceManager(DesktopDaemonServiceManager):
     def disable(self) -> None:
         with self._guard():
             self._call("")
+
+    def version(self) -> str:
+        """Query the installed daemon binary without its private RPC or Clash API."""
+        with self._guard():
+            if sys.platform != "win32":
+                raise DesktopDaemonError(
+                    "Windows desktop version lookup requires Windows."
+                )
+            try:
+                pid = psutil.win_service_get("sing-box-daemon").pid()
+                if not pid:
+                    raise DesktopDaemonError(
+                        "The sing-box desktop daemon is not running, start it in the desktop app."
+                    )
+                executable = psutil.Process(pid).exe()
+                result = subprocess.run(
+                    [executable, "version"],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    timeout=15,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                )
+            except (psutil.Error, OSError, subprocess.SubprocessError) as e:
+                raise DesktopDaemonError(
+                    "Cannot read the installed Windows desktop daemon's version."
+                ) from e
+            for line in result.stdout.splitlines():
+                prefix = "sing-box-daemon version "
+                if line.startswith(prefix) and (version := line[len(prefix) :].strip()):
+                    return f"sing-box {version} (desktop daemon)"
+            raise DesktopDaemonError("The desktop daemon binary returned no version.")
+        return ""  # unreachable, _guard exits

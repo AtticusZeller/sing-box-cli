@@ -1,6 +1,7 @@
 """Windows desktop layout, store ownership and unsupported service controls."""
 
 import importlib
+import subprocess
 import sys
 from collections.abc import Callable
 from contextlib import nullcontext
@@ -8,8 +9,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import psutil
 import pytest
 import typer
+from typer.testing import CliRunner
 
 from sing_box_cli.config.store import SettingsError
 from sing_box_cli.service import desktop, desktop_windows as windows
@@ -172,16 +175,7 @@ def test_registry_reader_uses_native_view_and_preserves_literal_paths(
 
 @pytest.mark.parametrize(
     "action",
-    [
-        "start",
-        "stop",
-        "restart",
-        "status",
-        "clear_cache",
-        "create_service",
-        "disable",
-        "version",
-    ],
+    ["start", "stop", "restart", "status", "clear_cache", "create_service", "disable"],
 )
 def test_desktop_commands_report_authentication_limit_without_starting_another_service(
     action: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
@@ -198,3 +192,118 @@ def test_desktop_commands_report_authentication_limit_without_starting_another_s
     output = capsys.readouterr().out
     assert "signed desktop application and worker" in output
     assert "systemctl" not in output
+
+
+@pytest.fixture
+def daemon_executable(monkeypatch: pytest.MonkeyPatch) -> str:
+    """Only inspect the official service; no profile, API or bundled core is needed."""
+    executable = r"C:\Program Files\sing-box\resources\daemon\sing-box-daemon.exe"
+    monkeypatch.setattr(windows.sys, "platform", "win32")
+    monkeypatch.setattr(
+        windows.psutil,
+        "win_service_get",
+        lambda name: SimpleNamespace(pid=lambda: 123),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        windows.psutil, "Process", lambda pid: SimpleNamespace(exe=lambda: executable)
+    )
+    monkeypatch.setattr(subprocess, "CREATE_NO_WINDOW", 0x08000000, raising=False)
+    return executable
+
+
+def test_version_reads_the_desktop_daemon_without_an_api_or_profile(
+    daemon_executable: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[tuple[list[str], dict[str, Any]]] = []
+
+    def run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append((command, kwargs))
+        return subprocess.CompletedProcess(
+            command, 0, "sing-box-daemon version 1.14.3\ncore api version 1\n"
+        )
+
+    monkeypatch.setattr(subprocess, "run", run)
+    config = SimpleNamespace()  # deliberately has no API address or bin_path
+    service = windows.WindowsDesktopServiceManager(config)
+    main = importlib.import_module("sing_box_cli.main")
+    monkeypatch.setattr(main, "get_config", lambda: config)
+    monkeypatch.setattr(main, "create_service", lambda _: service)
+    result = CliRunner().invoke(main.app, ["version"])
+
+    assert result.exit_code == 0, result.output
+    assert "sing-box 1.14.3 (desktop daemon)" in result.output
+    assert calls == [
+        (
+            [daemon_executable, "version"],
+            {
+                "check": True,
+                "capture_output": True,
+                "text": True,
+                "encoding": "utf-8",
+                "timeout": 15,
+                "creationflags": subprocess.CREATE_NO_WINDOW,
+            },
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    "output", ["", "core api version 1\n", "sing-box-daemon version \n"]
+)
+def test_version_does_not_invent_a_version(
+    daemon_executable: str, monkeypatch: pytest.MonkeyPatch, output: str
+) -> None:
+    monkeypatch.setattr(
+        subprocess, "run", lambda *a, **kw: subprocess.CompletedProcess([], 0, output)
+    )
+    with pytest.raises(typer.Exit):
+        windows.WindowsDesktopServiceManager(SimpleNamespace()).version()
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        psutil.AccessDenied(123),
+        psutil.NoSuchProcess(123),
+        FileNotFoundError("not found"),
+        subprocess.TimeoutExpired("version", 15),
+        subprocess.CalledProcessError(1, "version", stderr="private diagnostic"),
+    ],
+)
+def test_version_lookup_failures_are_reported_without_a_traceback(
+    daemon_executable: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    error: Exception,
+) -> None:
+    def fail(*args: Any, **kwargs: Any) -> Any:
+        raise error
+
+    if isinstance(error, psutil.Error):
+        monkeypatch.setattr(windows.psutil, "Process", fail)
+    else:
+        monkeypatch.setattr(subprocess, "run", fail)
+    with pytest.raises(typer.Exit):
+        windows.WindowsDesktopServiceManager(SimpleNamespace()).version()
+    output = capsys.readouterr().out
+    assert "Cannot read" in output
+    assert "private diagnostic" not in output
+
+
+def test_version_reports_a_stopped_daemon_without_starting_it(
+    daemon_executable: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        windows.psutil, "win_service_get", lambda _: SimpleNamespace(pid=lambda: None)
+    )
+
+    def unexpected(*args: Any, **kwargs: Any) -> None:
+        pytest.fail("version must not start the daemon or another core")
+
+    monkeypatch.setattr(subprocess, "run", unexpected)
+    with pytest.raises(typer.Exit):
+        windows.WindowsDesktopServiceManager(SimpleNamespace()).version()
+    assert "not running" in capsys.readouterr().out
