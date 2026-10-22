@@ -192,7 +192,7 @@ sbc service restart --update              # sudo works too, it acts as the invok
 | `config update [URL]`, `--update` | refresh the profile selected in the app and record the refresh there. A new URL is saved to that profile once it downloads fine |
 | `--clear-cache`, `config clear_cache` | clear the daemon's working directory, like "clear data" in the app |
 | `stats/conns/proxy/logs` | unchanged, the default API address comes from the profile |
-| `run` | refused, the daemon runs the core |
+| `run` | requires `--force-cli` for explicit Linux foreground takeover |
 
 The core is started with the start options set in the app (OOM killer, memory
 limit, power report). The app's store is never created or repaired from here: if it
@@ -200,6 +200,38 @@ cannot be read, or the daemon is stopped, sbc says so instead of working around 
 
 - A local profile of the app has no subscription, `config update URL` is refused for it.
 - The app may show an old subscription URL until its profile list is reloaded.
+
+#### Foreground debugging when the daemon fails
+
+If desktop service commands fail with `DEADLINE_EXCEEDED` or `UNAVAILABLE`, use:
+
+```bash
+sudo sbc run --force-cli
+# Optional: refresh the selected subscription and/or clear the foreground cache
+sudo sbc run --force-cli --update --clear-cache
+```
+
+This Linux-only flag bypasses desktop gRPC. It exits the invoking user's desktop
+application and its workers, stops `sing-box-daemon.service` and any installed
+`sing-box.service`, then runs the independent `sing-box-bin` core in the terminal.
+It uses the app's selected profile and the user's sing-box configuration directory
+as its working directory; it never uses the desktop executable on PATH as a core.
+Failed or unverifiable stops abort the launch. Keep the desktop app closed while
+debugging to avoid starting a competing core.
+
+The core prints its own diagnostics, using the profile's logging settings. This
+does not enable debug-level logging or change the profile automatically. Relative
+cache paths resolve under the configuration directory, so `--clear-cache` here
+clears that foreground cache, rather than the daemon's private working directory.
+An explicit update runs before stopping the services and aborts on failure.
+
+After the core exits or you press Ctrl+C, the services stay stopped. No backend
+preference or autostart setting is changed. Restore desktop mode with:
+
+```bash
+sudo systemctl start sing-box-daemon.service
+# Then reopen the desktop application.
+```
 
 ### Windows desktop app
 

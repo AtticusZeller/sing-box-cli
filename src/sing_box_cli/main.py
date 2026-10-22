@@ -45,12 +45,33 @@ def run(
     ctx: typer.Context,
     update: UpdateConfigOption = False,
     purge: ClearCacheOption = False,
+    force_cli: Annotated[
+        bool,
+        typer.Option(
+            "--force-cli",
+            help="Linux: stop the desktop app and services, then debug with the standalone core.",
+        ),
+    ] = False,
 ) -> None:
     """Run sing-box if host's service unavailable or debug mode."""
     cfg = get_context_obj(ctx).config
+    if force_cli:
+        import sys
+
+        if sys.platform != "linux":
+            print("❌ --force-cli is supported on Linux only.")
+            raise typer.Exit(1)
     if cfg.external_config is True:
+        if force_cli:
+            from sing_box_cli.service.debug import run_desktop_debug
+
+            ensure_root()
+            run_desktop_debug(cfg, update=update, purge=purge)
+            return
         action = "the desktop app" if cfg.is_windows else "`sbc service restart`"
         print(f"❌ The sing-box desktop app runs the core, use {action}.")
+        if not cfg.is_windows:
+            print("ℹ️ For foreground debugging, use: sudo sbc run --force-cli")
         raise typer.Exit(1)
     ensure_root()
 
@@ -59,6 +80,7 @@ def run(
             pass
         else:
             print("❌ Failed to update configuration.")
+            raise typer.Exit(1)
     if purge:
         cfg.clear_cache()
 

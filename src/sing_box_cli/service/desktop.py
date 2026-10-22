@@ -252,8 +252,17 @@ class DesktopDaemonServiceManager(ServiceManager):
                     )
                 )
         except grpc.RpcError as e:
+            hint = ""
+            if sys.platform == "linux" and e.code() in (
+                grpc.StatusCode.DEADLINE_EXCEEDED,
+                grpc.StatusCode.UNAVAILABLE,
+            ):
+                hint = (
+                    "\nFor foreground debugging, stop the desktop app and services with: "
+                    "sudo sbc run --force-cli"
+                )
             raise DesktopDaemonError(
-                f"sing-box daemon call failed: {e.code().name} {e.details()}"
+                f"sing-box daemon call failed: {e.code().name} {e.details()}{hint}"
             ) from e
         except StopIteration as e:
             raise DesktopDaemonError("sing-box daemon returned no status") from e

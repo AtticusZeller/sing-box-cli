@@ -41,6 +41,7 @@ class FakeDaemon(grpc.GenericRpcHandler):  # type: ignore[misc]
         self.status = STARTED
         self.calls: list[str] = []
         self.start_requests: list[bytes] = []
+        self.rpc_failure: Any = None
 
     def service(self, details: Any) -> Any:
         method = details.method.rsplit("/", 1)[-1]
@@ -48,9 +49,13 @@ class FakeDaemon(grpc.GenericRpcHandler):  # type: ignore[misc]
             return grpc.unary_stream_rpc_method_handler(
                 lambda request, context: iter([desktop._field_varint(1, self.status)])
             )
-        return grpc.unary_unary_rpc_method_handler(
-            lambda request, context: self._unary(method, request)
-        )
+
+        def handle(request: bytes, context: Any) -> bytes:
+            if self.rpc_failure is not None:
+                context.abort(self.rpc_failure, "test daemon failure")
+            return self._unary(method, request)
+
+        return grpc.unary_unary_rpc_method_handler(handle)
 
     def _unary(self, method: str, request: bytes) -> bytes:
         if method == "GetDaemonInfo":
@@ -109,6 +114,22 @@ def test_status_follows_the_service(daemon: FakeDaemon, app_dir: Path) -> None:
     manager.stop()
     assert manager.status() == "Stopped"
     assert daemon.calls == ["StopService"]
+
+
+@pytest.mark.parametrize(
+    "code", [grpc.StatusCode.DEADLINE_EXCEEDED, grpc.StatusCode.UNAVAILABLE]
+)
+def test_rpc_failure_preserves_error_and_suggests_explicit_debug(
+    code: Any, daemon: FakeDaemon, app_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    daemon.rpc_failure = code
+    with pytest.raises(typer.Exit):
+        _manager(app_dir).status()
+    output = capsys.readouterr().out
+    assert code.name in output
+    assert "test daemon failure" in output
+    assert "sudo sbc run --force-cli" in output
+    assert daemon.calls == []
 
 
 def test_stop_does_nothing_when_already_stopped(

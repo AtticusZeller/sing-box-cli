@@ -438,10 +438,10 @@ def get_config(*, initialize: bool = True) -> ConfigHandler:
     return config
 
 
-def run_args(config: ConfigHandler) -> list[str]:
+def run_args(config: ConfigHandler, *, binary: Path | None = None) -> list[str]:
     """Build subprocess arguments without splitting paths containing whitespace."""
     return [
-        str(config.bin_path),
+        str(binary if binary is not None else config.bin_path),
         "run",
         "-c",
         str(config.config_file),
