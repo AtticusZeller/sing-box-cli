@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.1.13 - 2026-10-22
+
+### Added
+
+- *(service)* Add Linux `sbc run --force-cli` to stop the desktop app and managed sing-box services, then run the selected profile in the foreground with the independent core without desktop gRPC. Services stay stopped after debugging; autostart settings are unchanged
+
+### Fixed
+
+- *(service)* Suggest explicit foreground takeover when desktop RPC reports `DEADLINE_EXCEEDED` or `UNAVAILABLE`, preserving the original error
+- *(cli)* Abort `run --update` when the requested configuration update fails
+
 ## 0.1.12 - 2026-10-17
 
 ### Fixed
