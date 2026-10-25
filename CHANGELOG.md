@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.1.14 - 2026-10-25
+
+### Fixed
+
+- *(service)* Make Linux `run --force-cli` submit non-blocking stop jobs and directly terminate verified service cgroup processes, escalating TERM to KILL with short waits, so an unresponsive daemon cannot hold it in synchronous `systemctl stop`. Report progress and abort if stop jobs cannot be submitted or processes remain
+
 ## 0.1.13 - 2026-10-22
 
 ### Added
