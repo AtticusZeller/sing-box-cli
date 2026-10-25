@@ -40,6 +40,28 @@ jobs:
       - name: Install dependencies
         run: uv sync --python ${{ matrix.python-version }} --all-extras --dev
 
+      - name: Smoke test legacy Windows CLI output
+        if: runner.os == 'Windows'
+        shell: powershell
+        env:
+          PYTHONUTF8: "0"
+          PYTHONIOENCODING: "cp1252:strict"
+          PYTHONLEGACYWINDOWSSTDIO: "1"
+        run: |
+          $env:APPDATA = Join-Path $env:RUNNER_TEMP "sbc-console-smoke"
+          New-Item -ItemType Directory -Force $env:APPDATA | Out-Null
+          $version = @(& .\.venv\Scripts\sbc.exe version 2>&1 | ForEach-Object { "$_" })
+          if ($LASTEXITCODE -ne 0) { throw ($version -join "`n") }
+          if ($version.Count -lt 2 -or $version[0] -notmatch 'sing-box-cli \d+\.\d+\.\d+') {
+            throw "Version must be the first line: $($version -join '`n')"
+          }
+          $output = @(& .\.venv\Scripts\sbc.exe config get --subscription 2>&1 | ForEach-Object { "$_" })
+          if ($LASTEXITCODE -ne 0 -or ($output -join "`n") -notmatch 'No subscription URL found') {
+            throw "Normal command failed: $($output -join '`n')"
+          }
+          $version
+          $output
+
       - name: Run Code Coverage Tests Pipeline
         run: uv run bash scripts/pre-commit.sh
 

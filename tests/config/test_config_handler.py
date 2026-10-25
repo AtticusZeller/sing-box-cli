@@ -456,3 +456,19 @@ def test_run_command_uses_the_profile(config_dir: Path) -> None:
     assert handler.config_file.parent == config_dir / "profiles"
     assert f"-c {handler.config_file} " in config_module.run_cmd(handler)
     assert str(handler.config_file) in config_module.run_args(handler)
+
+
+@pytest.mark.parametrize("desktop", [False, True])
+def test_constructor_is_silent(
+    config_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    desktop: bool,
+) -> None:
+    monkeypatch.setattr(
+        config_module.ConfigHandler, "_detect_desktop_app", lambda self: desktop
+    )
+    config_module.ConfigHandler()
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""

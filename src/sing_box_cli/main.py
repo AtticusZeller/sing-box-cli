@@ -1,4 +1,5 @@
 import subprocess
+import sys
 from pathlib import Path
 from typing import Annotated
 
@@ -25,7 +26,12 @@ app.command("token")(token_options)
 def callback(ctx: typer.Context) -> None:
     if ctx.invoked_subcommand in ("install", "config", "token"):
         return
-    cfg = get_config()
+    # Reading a version must not create a store or print first-use setup messages.
+    cfg = (
+        get_config(initialize=False)
+        if ctx.invoked_subcommand == "version"
+        else get_config()
+    )
     service = create_service(cfg)
     ctx.obj = SharedContext(config=cfg, service=service)
 
@@ -103,7 +109,22 @@ def version(ctx: typer.Context) -> None:
     print(f"📦 {get_context_obj(ctx).service.version()}")
 
 
+def _configure_console_output() -> None:
+    """Keep Windows code pages, replacing characters they cannot represent."""
+    if sys.platform != "win32":
+        return
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            try:
+                reconfigure(errors="replace")
+            except (OSError, ValueError):
+                # Embedded/captured or closed streams may not be reconfigurable.
+                pass
+
+
 def main() -> None:
+    _configure_console_output()
     app()
 
 

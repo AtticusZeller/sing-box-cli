@@ -227,7 +227,12 @@ def test_version_reads_the_desktop_daemon_without_an_api_or_profile(
     config = SimpleNamespace()  # deliberately has no API address or bin_path
     service = windows.WindowsDesktopServiceManager(config)
     main = importlib.import_module("sing_box_cli.main")
-    monkeypatch.setattr(main, "get_config", lambda: config)
+
+    def get_config(*, initialize: bool) -> SimpleNamespace:
+        assert not initialize
+        return config
+
+    monkeypatch.setattr(main, "get_config", get_config)
     monkeypatch.setattr(main, "create_service", lambda _: service)
     result = CliRunner().invoke(main.app, ["version"])
 
