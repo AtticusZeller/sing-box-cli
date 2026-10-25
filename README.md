@@ -219,6 +219,15 @@ as its working directory; it never uses the desktop executable on PATH as a core
 Failed or unverifiable stops abort the launch. Keep the desktop app closed while
 debugging to avoid starting a competing core.
 
+Takeover submits non-blocking systemd stop jobs, then directly sends TERM to
+processes in the verified service cgroups, including nested workers. It allows
+3 seconds for TERM and 2 seconds after KILL for survivors, then polls shutdown
+and stop-job completion for up to 5 seconds. Progress messages show each stage.
+Each systemctl invocation has a timeout of at most 3 seconds. If systemd cannot
+accept the stop jobs, takeover aborts with the failed command instead of killing
+a daemon that may be automatically restarted. Processes outside the target
+service groups are not matched by name or command line.
+
 The core prints its own diagnostics, using the profile's logging settings. This
 does not enable debug-level logging or change the profile automatically. Relative
 cache paths resolve under the configuration directory, so `--clear-cache` here

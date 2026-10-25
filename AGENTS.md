@@ -53,6 +53,7 @@ Building locally from the sdist (`uv build`) may need `GOFLAGS=-buildvcs=false`.
 
 ## State
 
-0.1.13 (2026-10-22) adds Linux `run --force-cli` for explicit desktop debug takeover.
+0.1.14 (2026-10-25) fixes blocking desktop takeover with non-blocking stop jobs
+and direct TERM/KILL of verified service processes.
 Real-machine takeover/TUN/cache validation is pending in `docs/desktop-debug/plan.md`.
 Not verified at runtime: the Windows service paths against a real SCM.

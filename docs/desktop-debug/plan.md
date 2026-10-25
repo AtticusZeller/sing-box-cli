@@ -9,8 +9,9 @@ The execution contract and limits are in [overview.md](overview.md).
 
 **Change**
 
-- [ ] Use v0.1.13 or a later build containing this change on the affected machine. Keep the desktop
-  application closed after takeover. This interrupts proxy services and therefore
+- [ ] Use v0.1.14 or a later build containing the non-blocking stop correction on the
+  affected machine. The user reported that v0.1.13 failed this check on 2026-10-25.
+  Keep the desktop application closed after takeover. This interrupts proxy services and therefore
   remains a user-run check; no local service was stopped during implementation.
 
 **Verification**

@@ -1,6 +1,7 @@
 """Explicit desktop takeover without using gRPC or changing the host's services."""
 
 import importlib
+import os
 import signal
 import subprocess
 import sys
@@ -18,6 +19,7 @@ from sing_box_cli.config.config import ConfigHandler
 from sing_box_cli.service import debug
 
 pytestmark = pytest.mark.skipif(sys.platform != "linux", reason="Linux takeover only")
+_PROCESS_TYPE = psutil.Process
 
 
 def _state(**changes: str) -> dict[str, str]:
@@ -28,6 +30,7 @@ def _state(**changes: str) -> dict[str, str]:
         "ControlPID": "0",
         "ControlGroup": "",
         "KillMode": "control-group",
+        "Job": "",
         **changes,
     }
 
@@ -171,11 +174,13 @@ def test_failed_takeover_never_launches_core(
 
 
 def _process(pid: int, executable: str, uid: int = 1000) -> MagicMock:
-    process = MagicMock(spec=psutil.Process)
+    process = MagicMock(spec=_PROCESS_TYPE)
     process.pid = pid
     process.uids.return_value = SimpleNamespace(real=uid)
     process.exe.return_value = executable
     process.children.return_value = []
+    process.is_running.return_value = True
+    process.status.return_value = psutil.STATUS_RUNNING
     return process
 
 
@@ -211,58 +216,312 @@ def test_termination_escalates_only_for_survivors(
     assert all(call.kwargs["timeout"] == debug._WAIT for call in wait.call_args_list)
 
 
-@pytest.mark.parametrize(
-    "failure", ["timeout", "command", "active", "worker", "missing", "killmode"]
-)
-def test_systemd_stop_failure_is_reported(
-    failure: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+@pytest.fixture
+def managed_units(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
+    """A stop job stays deactivating until a direct signal ends its processes."""
+    root = tmp_path / "cgroups"
+    root.mkdir()
+    (root / "cgroup.controllers").touch()
+    unit = "sing-box-daemon.service"
+    group = f"/system.slice/{unit}"
+    directory = root / group.lstrip("/")
+    directory.mkdir(parents=True)
+    (directory / "cgroup.procs").write_text("42\n")
+    (directory / "cgroup.events").write_text("populated 1\n")
+    proc_root = tmp_path / "proc"
+    processes = {pid: _process(pid, "/app/daemon", uid=0) for pid in (42, 43, 44)}
+    queued: list[str] = []
+
+    def exit_process(pid: int) -> None:
+        processes[pid].is_running.return_value = False
+        for file in directory.rglob("cgroup.procs"):
+            file.write_text(
+                "".join(
+                    f"{line}\n"
+                    for line in file.read_text().splitlines()
+                    if line != str(pid)
+                )
+            )
+        populated = any(
+            file.read_text().strip() for file in directory.rglob("cgroup.procs")
+        )
+        (directory / "cgroup.events").write_text(f"populated {int(populated)}\n")
+
+    for pid, process in processes.items():
+        (proc_root / str(pid)).mkdir(parents=True)
+        (proc_root / str(pid) / "cgroup").write_text(f"0::{group}\n")
+        process.terminate.side_effect = lambda pid=pid: exit_process(pid)
+        process.kill.side_effect = lambda pid=pid: exit_process(pid)
+
+    def run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if args[0] != "systemctl":
+            return subprocess.CompletedProcess(args, 0, stdout="version")
+        assert float(kwargs["timeout"]) <= 3
+        if args[1] == "--no-block":
+            queued.append(args[-1])
+            state = _state()
+        elif args[2] != unit:
+            state = _state(LoadState="not-found")
+        elif (directory / "cgroup.events").read_text() == "populated 1\n":
+            state = _state(
+                ActiveState="deactivating" if queued else "active",
+                MainPID="42",
+                ControlGroup=group,
+                Job="7" if queued else "",
+            )
+        else:
+            state = _state()
+        return subprocess.CompletedProcess(
+            args, 0, stdout="\n".join(f"{k}={v}" for k, v in state.items())
+        )
+
+    runner = MagicMock(side_effect=run)
+    monkeypatch.setattr(debug, "_CGROUP_ROOT", root)
+    monkeypatch.setattr(debug, "_PROC_ROOT", proc_root)
+    monkeypatch.setattr(debug, "_VERIFY_WAIT", 0.02)
+    monkeypatch.setattr(debug.psutil, "Process", lambda pid: processes[pid])
+    monkeypatch.setattr(debug.subprocess, "run", runner)
+    wait = MagicMock(
+        side_effect=lambda procs, **kw: (
+            [p for p in procs if not p.is_running()],
+            [p for p in procs if p.is_running()],
+        )
+    )
+    monkeypatch.setattr(debug.psutil, "wait_procs", wait)
+    return SimpleNamespace(
+        root=root,
+        directory=directory,
+        group=group,
+        proc_root=proc_root,
+        processes=processes,
+        run=runner,
+        handler=run,
+        queued=queued,
+        wait=wait,
+    )
+
+
+def test_stalled_stop_job_is_finished_by_direct_term(
+    managed_units: SimpleNamespace, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    before = _state(ActiveState="active", MainPID="42")
-    after = _state()
-    run = MagicMock()
-    if failure == "timeout":
-        run.side_effect = subprocess.TimeoutExpired("systemctl", 20)
-    elif failure == "command":
-        run.side_effect = subprocess.CalledProcessError(1, "systemctl")
-    elif failure == "active":
-        after["ActiveState"] = "active"
-    elif failure == "worker":
-        after["ControlGroup"] = "/system.slice/sing-box-daemon.service"
-        (tmp_path / "cgroup.controllers").touch()
-        group = tmp_path / after["ControlGroup"].lstrip("/")
-        group.mkdir(parents=True)
-        (group / "cgroup.events").write_text("populated 1\nfrozen 0\n")
-        monkeypatch.setattr(debug, "_CGROUP_ROOT", tmp_path)
-    elif failure == "missing":
-        before = _state(LoadState="not-found")
+    env = managed_units
+    debug._stop_units()
+    assert env.queued == ["sing-box-daemon.service"]
+    env.processes[42].terminate.assert_called_once()
+    env.processes[42].kill.assert_not_called()
+    assert env.wait.call_args.kwargs["timeout"] == 3
+    output = capsys.readouterr().out
+    assert (
+        output.index("non-blocking stop")
+        < output.index("Sending TERM")
+        < output.index("Verifying")
+    )
+
+
+def test_ignored_term_escalates_for_verified_survivors(
+    managed_units: SimpleNamespace,
+) -> None:
+    env = managed_units
+    env.processes[42].terminate.side_effect = None
+    debug._stop_units()
+    env.processes[42].terminate.assert_called_once()
+    env.processes[42].kill.assert_called_once()
+    assert [call.kwargs["timeout"] for call in env.wait.call_args_list] == [3, 2]
+
+
+def test_nested_worker_is_included(managed_units: SimpleNamespace) -> None:
+    env = managed_units
+    nested = env.directory / "worker"
+    nested.mkdir()
+    (nested / "cgroup.procs").write_text("43\n")
+    (env.proc_root / "43/cgroup").write_text(f"0::{env.group}/worker\n")
+    debug._stop_units()
+    env.processes[42].terminate.assert_called_once()
+    env.processes[43].terminate.assert_called_once()
+    env.processes[44].terminate.assert_not_called()
+
+
+@pytest.mark.parametrize("failure", ["show-timeout", "stop-timeout", "stop-command"])
+def test_service_manager_failure_names_command_and_never_signals(
+    failure: str, managed_units: SimpleNamespace
+) -> None:
+    env = managed_units
+
+    def fail(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if (failure == "show-timeout" and args[1] == "show") or (
+            failure != "show-timeout" and args[1] == "--no-block"
+        ):
+            if failure == "stop-command":
+                raise subprocess.CalledProcessError(1, args)
+            raise subprocess.TimeoutExpired(args, 3)
+        return env.handler(args, **kwargs)
+
+    env.run.side_effect = fail
+    with pytest.raises(debug.DebugTakeoverError, match="systemctl .*failed"):
+        debug._stop_units()
+    for process in env.processes.values():
+        process.terminate.assert_not_called()
+        process.kill.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "missing-procs",
+        "invalid-pids",
+        "unsafe-group",
+        "protected-pid",
+        "foreign-member",
+        "unreadable-procs",
+    ],
+)
+def test_unverifiable_process_identity_prevents_stop_and_signals(
+    failure: str, managed_units: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = managed_units
+    if failure == "missing-procs":
+        (env.directory / "cgroup.procs").unlink()
+    elif failure == "invalid-pids":
+        (env.directory / "cgroup.procs").write_text("invalid\n")
+    elif failure == "protected-pid":
+        (env.directory / "cgroup.procs").write_text(f"{os.getpid()}\n")
+    elif failure == "foreign-member":
+        (env.proc_root / "42/cgroup").write_text("0::/user.slice/unrelated.scope\n")
+    elif failure == "unsafe-group":
+        monkeypatch.setattr(debug, "_unit_state", lambda unit: _state(ControlGroup="/"))
     else:
-        before["KillMode"] = "process"
-    monkeypatch.setattr(debug, "_unit_state", MagicMock(side_effect=[before, after]))
-    monkeypatch.setattr(debug.subprocess, "run", run)
-    with pytest.raises((debug.DebugTakeoverError, subprocess.SubprocessError)):
+        read = Path.read_text
+
+        def denied(path: Path, *args: object, **kwargs: object) -> str:
+            if path.name == "cgroup.procs":
+                raise PermissionError("unreadable cgroup")
+            return read(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", denied)
+    with pytest.raises((debug.DebugTakeoverError, PermissionError)):
+        debug._stop_units()
+    assert env.queued == []
+    env.processes[42].terminate.assert_not_called()
+
+
+def test_exited_or_reused_identity_is_not_signalled(
+    managed_units: SimpleNamespace,
+) -> None:
+    env = managed_units
+    env.processes[42].is_running.return_value = False
+
+    # The stale cgroup snapshot still mentions this PID, but the cached identity
+    # is no longer running. It must not signal whatever reused that number.
+    def stop(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        result = env.handler(args, **kwargs)
+        if args[1] == "--no-block":
+            (env.directory / "cgroup.events").write_text("populated 0\n")
+            (env.directory / "cgroup.procs").write_text("")
+        return result
+
+    env.run.side_effect = stop
+    debug._stop_units()
+    env.processes[42].terminate.assert_not_called()
+    env.processes[42].kill.assert_not_called()
+
+
+def test_membership_is_rechecked_before_kill(managed_units: SimpleNamespace) -> None:
+    env = managed_units
+
+    def move() -> None:
+        (env.proc_root / "42/cgroup").write_text("0::/user.slice/unrelated.scope\n")
+
+    env.processes[42].terminate.side_effect = move
+    with pytest.raises(debug.DebugTakeoverError, match="PID 42 left service group"):
+        debug._stop_units()
+    env.processes[42].kill.assert_not_called()
+
+
+def test_stop_verification_retries_a_finishing_job(
+    managed_units: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = managed_units
+    polls = 0
+
+    def finishing(
+        args: list[str], **kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        nonlocal polls
+        result = env.handler(args, **kwargs)
+        if env.queued and args[1] == "show" and args[2] == "sing-box-daemon.service":
+            polls += 1
+            if polls == 1:
+                result.stdout = result.stdout.replace("Job=", "Job=9")
+        return result
+
+    env.run.side_effect = finishing
+    monkeypatch.setattr(debug.time, "sleep", lambda _: None)
+    debug._stop_units()
+    assert polls == 2
+
+
+@pytest.mark.parametrize("failure", ["survivor", "new-worker", "pending-job"])
+def test_final_verification_rejects_survivors_or_pending_jobs(
+    failure: str, managed_units: SimpleNamespace
+) -> None:
+    env = managed_units
+    if failure == "survivor":
+        env.processes[42].terminate.side_effect = None
+        env.processes[42].kill.side_effect = None
+    elif failure == "new-worker":
+
+        def spawn() -> None:
+            env.processes[42].is_running.return_value = False
+            (env.directory / "cgroup.procs").write_text("44\n")
+
+        env.processes[42].terminate.side_effect = spawn
+    else:
+
+        def pending(
+            args: list[str], **kwargs: object
+        ) -> subprocess.CompletedProcess[str]:
+            result = env.handler(args, **kwargs)
+            if args[1] == "show" and args[2] == "sing-box-daemon.service":
+                result.stdout = result.stdout.replace("Job=", "Job=9")
+            return result
+
+        env.run.side_effect = pending
+    with pytest.raises(debug.DebugTakeoverError, match="verification timed out"):
         debug._stop_units()
 
 
-def test_stop_both_units_and_accept_absent_standalone(
+@pytest.mark.parametrize("failure", ["survivor", "submit-timeout", "missing-procs"])
+def test_stop_failure_cannot_clear_cache_or_launch_core(
+    failure: str,
+    config: MagicMock,
+    managed_units: SimpleNamespace,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    run = MagicMock()
-    monkeypatch.setattr(debug.subprocess, "run", run)
-    monkeypatch.setattr(
-        debug,
-        "_unit_state",
-        MagicMock(
-            side_effect=[
-                _state(ActiveState="active"),
-                _state(),
-                _state(LoadState="not-found"),
-            ]
-        ),
-    )
-    debug._stop_units()
-    run.assert_called_once_with(
-        ["systemctl", "stop", "sing-box-daemon.service"], check=True, timeout=20
-    )
+    env = managed_units
+    if failure == "survivor":
+        env.processes[42].terminate.side_effect = None
+        env.processes[42].kill.side_effect = None
+    elif failure == "missing-procs":
+        (env.directory / "cgroup.procs").unlink()
+    else:
+
+        def timeout(
+            args: list[str], **kwargs: object
+        ) -> subprocess.CompletedProcess[str]:
+            if args[1] == "--no-block":
+                raise subprocess.TimeoutExpired(args, 3)
+            return env.handler(args, **kwargs)
+
+        env.run.side_effect = timeout
+    monkeypatch.setattr(debug, "_stop_app", lambda _: None)
+    launch = MagicMock()
+    monkeypatch.setattr(debug, "_foreground", launch)
+    main = importlib.import_module("sing_box_cli.main")
+    result = CliRunner().invoke(main.app, ["run", "--force-cli", "--clear-cache"])
+    assert result.exit_code == 1
+    assert "Foreground debug failed" in result.output
+    config.clear_cache.assert_not_called()
+    launch.assert_not_called()
 
 
 def test_unreadable_systemd_state_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -277,6 +536,64 @@ def test_unreadable_systemd_state_is_rejected(monkeypatch: pytest.MonkeyPatch) -
 
 def test_foreground_forwards_real_exit_status() -> None:
     assert debug._foreground([sys.executable, "-c", "raise SystemExit(17)"]) == 17
+
+
+def test_real_unresponsive_child_is_killed_without_signalling_unrelated_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    unit = "sing-box-daemon.service"
+    group = f"/system.slice/{unit}"
+    root = tmp_path / "cgroups"
+    directory = root / group.lstrip("/")
+    directory.mkdir(parents=True)
+    (root / "cgroup.controllers").touch()
+    script = (
+        "import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+        "print('ready',flush=True); time.sleep(60)"
+    )
+    child = subprocess.Popen(
+        [sys.executable, "-c", script], stdout=subprocess.PIPE, text=True
+    )
+    unrelated = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        assert child.stdout is not None
+        assert child.stdout.readline() == "ready\n"
+        (directory / "cgroup.procs").write_text(f"{child.pid}\n")
+        (directory / "cgroup.events").write_text("populated 1\n")
+        proc_root = tmp_path / "proc"
+        (proc_root / str(child.pid)).mkdir(parents=True)
+        (proc_root / str(child.pid) / "cgroup").write_text(f"0::{group}\n")
+        queued = []
+
+        def state(_unit: str, **kwargs: object) -> dict[str, str]:
+            if child.poll() is None:
+                return _state(
+                    ActiveState="deactivating" if queued else "active",
+                    MainPID=str(child.pid),
+                    ControlGroup=group,
+                    Job="7" if queued else "",
+                )
+            (directory / "cgroup.procs").write_text("")
+            (directory / "cgroup.events").write_text("populated 0\n")
+            return _state()
+
+        monkeypatch.setattr(debug, "_CGROUP_ROOT", root)
+        monkeypatch.setattr(debug, "_PROC_ROOT", proc_root)
+        monkeypatch.setattr(debug, "_UNITS", (unit,))
+        monkeypatch.setattr(debug, "_TERM_WAIT", 0.05)
+        monkeypatch.setattr(debug, "_unit_state", state)
+        monkeypatch.setattr(debug, "_systemctl", lambda args: queued.append(args) or "")
+        debug._stop_units()
+        assert queued == [["--no-block", "stop", unit]]
+        assert child.poll() is not None
+        assert unrelated.poll() is None
+    finally:
+        for process in (child, unrelated):
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=3)
+        if child.stdout is not None:
+            child.stdout.close()
 
 
 def test_ctrl_c_reaps_unresponsive_child(monkeypatch: pytest.MonkeyPatch) -> None:

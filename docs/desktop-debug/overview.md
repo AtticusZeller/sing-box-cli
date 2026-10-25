@@ -13,6 +13,18 @@ Failure to verify service shutdown prevents core launch; nonempty cgroups requir
 cgroup v2 verification. The foreground core uses the profile and configuration
 directory rather than the desktop daemon's private working directory.
 
+The service-stop correction uses `systemctl --no-block stop` with a 3-second
+per-call timeout, then directly signals the snapshotted service cgroup processes.
+Nested workers are included, and `/proc/<pid>/cgroup` membership plus psutil process
+identity is checked before each signal. TERM gets 3 seconds; verified survivors
+receive KILL with another 2 seconds. A final 5-second polling phase checks the
+original and current groups, tracked identities, and pending systemd jobs.
+If the service manager cannot accept a stop job, takeover fails before signalling
+managed processes so that `Restart=always` cannot create a competing core.
+This replaces v0.1.13's synchronous `systemctl stop` path, which timed out without
+direct daemon termination. The user's report established a runtime gap; earlier
+passing mocks did not verify that case. Runtime validation remains pending.
+
 Exit status is forwarded. Ctrl+C signals and reaps the child, escalating to TERM
 and KILL with bounded waits if needed. Services remain stopped; restoring desktop
 mode requires starting its daemon and reopening the app. Autostart and backend

@@ -98,3 +98,86 @@ through the CLI. Do not create, repair, or migrate desktop-owned settings.
   checks passed. Local wheel construction could not complete because Go was not
   available on PATH. The release workflow installs the Go version specified by
   windows-service/go.mod and verifies the packaged helper before publication.
+
+## Correct the blocking service-stop path
+
+Status: correction confirmed, implemented, and verified locally on 2026-10-25.
+Real-machine recovery remains pending. The user subsequently authorized release v0.1.14.
+
+On 2026-10-25 the user reported that `sudo sbc run --force-cli` still blocks in
+systemctl and that `sudo pkill -f sing-box` allowed recovery. The exact blocking
+subcommand and daemon failure remain unverified. The v0.1.13 implementation used
+synchronous `systemctl stop` with a 20-second subprocess timeout and aborts on
+failure. Its TERM/KILL escalation applies to GUI processes only, not the daemon.
+The earlier automated checks therefore did not establish the needed runtime
+recovery behavior. Note that plain pkill sends TERM, not KILL.
+
+### Task: End unresponsive managed processes without waiting for graceful systemd shutdown
+
+**Change**
+
+- [x] Keep the existing Linux-only, invocation-local `run --force-cli` interface
+  and desktop-owned selected profile. Change only the service takeover mechanism.
+- [x] Snapshot the managed units and process identities, then submit
+  `systemctl --no-block stop` for existing units, with a 3-second timeout per
+  systemctl invocation. Successful stop-job submission is required before sending
+  signals to daemon/core processes: a bare kill can trigger `Restart=always`.
+  If submission itself fails or hangs, report the specific failed command and
+  abort without starting a competing core.
+- [x] Read managed process identities from the verified unit cgroups, including
+  descendant groups. Signal those processes directly through psutil, rather than
+  waiting for `systemctl stop` to complete. Retain the current-user boundary for
+  the GUI; root-owned daemon/core processes must belong to the targeted units.
+  Protect against PID reuse, process exit races, and unrelated sbc processes.
+- [x] Send TERM, allow up to 3 seconds, then KILL verified survivors and allow
+  another 2 seconds. Do not use broad command-line matching: `pkill -f sing-box`
+  can match sbc's own interpreter/launcher as well as unrelated instances.
+- [x] Verify the unit groups are empty and stop jobs have completed with bounded
+  final polling (5 seconds). Reuse the collected identities to detect surviving
+  or restarted processes. If verification fails, print the remaining unit/PIDs and
+  do not clear cache or launch the debug core. Print progress at enqueue, TERM,
+  escalation, and verification so waits are visible.
+- [x] Preserve foreground exit/Ctrl+C behavior and leave services stopped without
+  changing persistent autostart settings. Update README, overview, and log to
+  distinguish this correction from the v0.1.13 behavior.
+
+**Verification**
+
+1. [x] Reproduce a stop job that stays in deactivating state; verify direct TERM
+   is sent without waiting for the normal systemd stop timeout, with KILL only
+   for verified survivors.
+2. [x] Cover a stalled stop-job submission, missing/unreadable cgroups, daemon
+   and nested worker processes, reused/exited PIDs, a restarted process, and an
+   unrelated CLI process. Confirm every failure prevents core launch/cache clear.
+3. [x] Check ordered progress messages, short subprocess timeouts, final polling
+   deadlines, current-user GUI boundaries, and unchanged profile ownership.
+4. [x] Run relevant tests, static checks, repository gates, Windows mypy, and
+   independent review against this correction. Do not stop host services in tests.
+
+**Done**
+
+- [x] A submitted but stalled stop job no longer prevents direct termination and
+  foreground debugging once the managed processes have exited.
+- [x] An unresponsive service manager produces a bounded, explicit failure,
+  rather than a silent wait or an unsafe competing core.
+- [x] The user can repeat the affected-machine check below with this correction;
+  automated fake-process results are not reported as real-machine success.
+
+### Verification evidence
+
+- Regression suite before final test expansion: 49 passed (37 debug and 12 daemon
+  tests), independently rerun by the reviewer with no actionable findings.
+- Final debug tests: 39 passed, including two additional command-level failure
+  cases. Both prove cache clearing and foreground launch are prevented.
+- A controlled real child ignored TERM and was killed after the short grace period;
+  a separate unrelated child stayed running. Neither child was a host service.
+- `uv run bash scripts/pre-commit.sh`: passed; 410 tests, 87% coverage, Linux mypy,
+  lint/format, and pre-commit. The two final extra test cases passed separately.
+- `uv run mypy src --platform win32`: passed for 24 source files.
+- All service-manager commands in tests were faked. Native `systemctl show` and
+  `/proc/self/cgroup` were read only to confirm field representations, notably an
+  empty `Job=` when there is no pending job.
+- Reverted formatter-only changes in `tests/api/test_monitor.py` as required.
+- Real daemon/TUN/cache recovery on the affected machine remains pending. This
+  correction was local and uncommitted at implementation handoff. The user
+  subsequently authorized commit, push, and release v0.1.14.
