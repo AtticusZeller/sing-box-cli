@@ -7,6 +7,7 @@ from typer.testing import CliRunner
 
 from sing_box_cli.config.config import ConfigHandler
 from sing_box_cli.service import SharedContext
+from sing_box_cli.service.manager import ServiceManager
 
 
 def test_run_preserves_paths_with_spaces(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -40,8 +41,11 @@ def test_enable_does_not_report_success_on_start_failure(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     service = importlib.import_module("sing_box_cli.service")
-    manager = MagicMock()
-    manager.start.side_effect = RuntimeError("start failed")
+    manager = ServiceManager(MagicMock())
+    monkeypatch.setattr(manager, "create_service", MagicMock())
+    monkeypatch.setattr(
+        manager, "start", MagicMock(side_effect=RuntimeError("start failed"))
+    )
     context = MagicMock(obj=SharedContext(config=MagicMock(), service=manager))
     monkeypatch.setattr(service, "ensure_root", lambda: None)
     with pytest.raises(RuntimeError, match="start failed"):

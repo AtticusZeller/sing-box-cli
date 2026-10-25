@@ -182,13 +182,15 @@ counts as installed when its `sing-box-daemon.service` exists.
 
 ```bash
 uv tool install 'sing-box-cli[desktop]'   # grpcio is only needed for this
+sudo sbc service enable                  # starts daemon, waits for RPC, starts selected core
 sbc service restart --update              # sudo works too, it acts as the invoking user
 ```
 
 | Command | With the desktop app |
 |---|---|
-| `service status/stop/restart/enable` | start, stop and reload the daemon's core. `restart` reloads in place, without a stop in between |
-| `service disable` | stops the core. Autostart stays with the app's `sing-box-daemon.service` |
+| `sudo sbc service enable` | starts the installed daemon if needed, waits for RPC readiness, then starts the selected core |
+| `sudo sbc service disable` | stops and verifies the core, then stops and verifies the daemon; RPC failure still triggers system-level shutdown |
+| `service status/stop/restart` | query, stop and reload the daemon's core. `stop` retains the daemon; `restart` reloads in place and requires a running daemon |
 | `config update [URL]`, `--update` | refresh the profile selected in the app and record the refresh there. A new URL is saved to that profile once it downloads fine |
 | `--clear-cache`, `config clear_cache` | clear the daemon's working directory, like "clear data" in the app |
 | `stats/conns/proxy/logs` | unchanged, the default API address comes from the profile |
@@ -196,7 +198,24 @@ sbc service restart --update              # sudo works too, it acts as the invok
 
 The core is started with the start options set in the app (OOM killer, memory
 limit, power report). The app's store is never created or repaired from here: if it
-cannot be read, or the daemon is stopped, sbc says so instead of working around it.
+cannot be read, sbc reports the error. Core-only commands require a running daemon;
+use `sudo sbc service enable` to start it. Full enable/disable require root, while
+profile reads and RPC run as the invoking user. Neither changes desktop autostart.
+
+Enable waits up to 15 seconds for RPC readiness. Disable gives the core stop and
+status checks a shared 15-second budget. It normally confirms `Stopped` before
+stopping the daemon. If RPC fails or the core cannot be confirmed stopped, it
+prints that uncertainty and continues with system-level daemon shutdown. Daemon
+shutdown submits a non-blocking stop, sends TERM to verified service processes,
+waits up to 3 seconds, then KILL to survivors with a 2-second wait, and verifies
+the unit, stop job and process group for up to 5 seconds. Each systemctl invocation
+has a 3-second limit (shorter near a verification deadline). A failed stop-job
+submission or unverified shutdown returns nonzero and never prints full-stop
+success. The GUI and unrelated standalone service are not terminated by disable.
+
+Restart the complete desktop service after disable with `sudo sbc service enable`.
+Actual desktop/TUN recovery validation is tracked in
+[the lifecycle verification plan](docs/desktop-lifecycle/plan.md).
 
 - A local profile of the app has no subscription, `config update URL` is refused for it.
 - The app may show an old subscription URL until its profile list is reloaded.

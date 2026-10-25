@@ -37,6 +37,17 @@ class ServiceManager:
     def disable(self) -> None:
         raise NotImplementedError()
 
+    def enable_service(self) -> None:
+        """Enable and start the complete service managed by this backend."""
+        self.create_service()
+        self.start()
+
+    def disable_service(self) -> str:
+        """Stop and disable the complete service; return the actual result."""
+        self.stop()
+        self.disable()
+        return "Autostart disabled."
+
     def version(self) -> str:
         raise NotImplementedError()
 

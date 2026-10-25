@@ -31,13 +31,12 @@ def ensure_privileges(service: ServiceManager) -> None:
 
 @service.command("enable")
 def service_enable(ctx: typer.Context) -> None:
-    """Create sing-box service, enable autostart and start service"""
+    """Start the service; enable autostart for standalone installations."""
     ctx_obj = get_context_obj(ctx)
     config = ctx_obj.config
     service = ctx_obj.service
     ensure_privileges(service)
-    service.create_service()
-    service.start()
+    service.enable_service()
     print("🔥 Service started.")
     if config.api_base_url:
         print(f"🔌 Default API: {config.api_base_url}")
@@ -45,13 +44,12 @@ def service_enable(ctx: typer.Context) -> None:
 
 @service.command("disable")
 def service_disable(ctx: typer.Context) -> None:
-    """Stop service, disable sing-box service autostart and remove service"""
+    """Stop the service; disable autostart for standalone installations."""
     ctx_obj = get_context_obj(ctx)
     service = ctx_obj.service
     ensure_privileges(service)
-    service.stop()
-    service.disable()
-    print("✋ Autostart disabled.")
+    result = service.disable_service()
+    print(f"✋ {result}")
 
 
 @service.command("restart")

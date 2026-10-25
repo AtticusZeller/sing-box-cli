@@ -648,3 +648,15 @@ def test_real_store_is_preserved(
     assert "core" in takeover
     assert {p: p.read_bytes() for p in before} == before
     assert not (directory / "config.json").exists()
+
+
+def test_daemon_only_stop_never_inspects_or_stops_standalone_unit(
+    managed_units: SimpleNamespace,
+) -> None:
+    env = managed_units
+    debug._stop_units(("sing-box-daemon.service",))
+    assert env.queued == ["sing-box-daemon.service"]
+    assert all(
+        "sing-box.service" not in call.args[0] for call in env.run.call_args_list
+    )
+    env.processes[42].terminate.assert_called_once()

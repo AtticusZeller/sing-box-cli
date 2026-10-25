@@ -82,7 +82,11 @@ def _systemctl(args: list[str], *, timeout: float = _SYSTEMCTL_TIMEOUT) -> str:
             command, check=True, capture_output=True, text=True, timeout=timeout
         )
     except (OSError, subprocess.SubprocessError) as e:
-        raise DebugTakeoverError(f"{' '.join(command)} failed: {e}") from e
+        detail = getattr(e, "stderr", None)
+        if isinstance(detail, bytes):
+            detail = detail.decode(errors="replace")
+        reason = f"; {detail.strip()}" if detail else ""
+        raise DebugTakeoverError(f"{' '.join(command)} failed: {e}{reason}") from e
     return result.stdout
 
 
@@ -254,8 +258,9 @@ def _verify_stopped(
     raise DebugTakeoverError(f"Stop verification timed out: {last_error}")
 
 
-def _stop_units() -> None:
-    states = {unit: _unit_state(unit) for unit in _UNITS}
+def _stop_units(units: tuple[str, ...] | None = None) -> None:
+    """Stop and verify the requested units, independently of desktop RPC."""
+    states = {unit: _unit_state(unit) for unit in (_UNITS if units is None else units)}
     groups: dict[str, str] = {}
     loaded = []
     for unit, state in states.items():

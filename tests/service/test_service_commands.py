@@ -36,6 +36,9 @@ class Recorder(ServiceManager):
     def restart(self) -> None:
         self.calls.append("restart")
 
+    def disable(self) -> None:
+        self.calls.append("disable")
+
     def status(self) -> str:
         return "Running"
 
@@ -66,6 +69,25 @@ def test_restart_stops_and_starts_an_installed_service(root_checks: list[str]) -
     invoke(service, "restart")
 
     assert service.calls == ["sync_service", "stop", "start"]
+    assert root_checks == ["root"]
+
+
+@pytest.mark.parametrize(
+    ("command", "calls", "message"),
+    [
+        ("enable", ["create_service", "start"], "Service started."),
+        ("disable", ["stop", "disable"], "Autostart disabled."),
+    ],
+)
+def test_default_backend_preserves_full_lifecycle_order_and_output(
+    root_checks: list[str], command: str, calls: list[str], message: str
+) -> None:
+    service = Recorder()
+    obj = SharedContext(config=service.config, service=service)
+    result = CliRunner().invoke(service_app, [command], obj=obj)
+    assert result.exit_code == 0, result.output
+    assert service.calls == calls
+    assert message in result.output
     assert root_checks == ["root"]
 
 

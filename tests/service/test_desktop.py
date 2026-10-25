@@ -68,7 +68,7 @@ def test_stopped_daemon_is_reported(capsys: pytest.CaptureFixture[str]) -> None:
 
     with pytest.raises(typer.Exit):
         service.status()
-    assert "systemctl start sing-box-daemon.service" in capsys.readouterr().out
+    assert "sudo sbc service enable" in capsys.readouterr().out
 
 
 def test_start_options_have_the_apps_defaults_when_never_set(

@@ -35,6 +35,8 @@ lift it without checking why. `sing-box-bin>=1.13` has no upper version bound.
 - Linux `run --force-cli` explicitly stops the desktop app and managed services,
   then runs the bundled core with the selected profile. Store ownership stays with
   the app; exiting debug mode does not restart services or change autostart.
+- Linux desktop `enable`/`disable` manage the daemon and core with bounded waits;
+  `stop`/`restart` only control the core. Autostart policy remains app-owned.
 - Subscription tokens live inside the stored URL (`?token=`), are sent as a bearer
   token and are never printed or logged.
 - Commits: Conventional Commits with a scope. PRs are squash-merged.
@@ -55,5 +57,7 @@ Building locally from the sdist (`uv build`) may need `GOFLAGS=-buildvcs=false`.
 
 0.1.14 (2026-10-25) fixes blocking desktop takeover with non-blocking stop jobs
 and direct TERM/KILL of verified service processes.
+Unreleased #44 adds complete Linux desktop enable/disable; real-machine lifecycle
+verification is pending in `docs/desktop-lifecycle/plan.md`.
 Real-machine takeover/TUN/cache validation is pending in `docs/desktop-debug/plan.md`.
 Not verified at runtime: the Windows service paths against a real SCM.

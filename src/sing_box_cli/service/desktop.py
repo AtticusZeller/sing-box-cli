@@ -17,6 +17,7 @@ import json
 import os
 import stat
 import sys
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -25,6 +26,7 @@ from typing import Any
 
 import typer
 
+from ..common import ensure_root
 from ..config.store import SettingsError, active_profile, invoking_user, settings_query
 from .manager import ServiceManager
 
@@ -32,6 +34,8 @@ DAEMON_SOCKET = Path("/run/sing-box.socket")
 DAEMON_UNIT = Path("/usr/lib/systemd/system/sing-box-daemon.service")
 
 _TIMEOUT = 15
+_LIFECYCLE_TIMEOUT = 15
+_DAEMON_SERVICE = "sing-box-daemon.service"
 _METADATA = (("accept-language", "en-US"),)
 
 _GET_DAEMON_INFO = "/desktop.DesktopService/GetDaemonInfo"
@@ -66,6 +70,10 @@ class StartOptions:
 
 class DesktopDaemonError(Exception):
     """The desktop daemon cannot be driven; the message tells the user why."""
+
+
+class DesktopDaemonUnavailable(DesktopDaemonError):
+    """A missing socket or transient RPC error while waiting for readiness."""
 
 
 def desktop_daemon_available() -> bool:
@@ -210,6 +218,28 @@ class DesktopDaemonServiceManager(ServiceManager):
     requires_root = False
     # Starting a running service reloads it in place, no stop needed.
     hot_reload = True
+    _rpc_deadline: float | None = None
+
+    @contextmanager
+    def _rpc_budget(self, seconds: float) -> Iterator[None]:
+        previous = self._rpc_deadline
+        self._rpc_deadline = time.monotonic() + seconds
+        try:
+            yield
+        finally:
+            self._rpc_deadline = previous
+
+    @contextmanager
+    def _lifecycle_guard(self) -> Iterator[None]:
+        # Systemd and process signals run as root, RPC/profile reads as the user.
+        from .debug import DebugTakeoverError
+
+        ensure_root()
+        try:
+            yield
+        except (DesktopDaemonError, SettingsError, DebugTakeoverError, OSError) as e:
+            print(f"❌ {e}")
+            raise typer.Exit(1) from e
 
     @contextmanager
     def _guard(self) -> Iterator[None]:
@@ -224,10 +254,17 @@ class DesktopDaemonServiceManager(ServiceManager):
         self, method: str, request: bytes = b"", *, stream: bool = False
     ) -> bytes:
         if not desktop_daemon_available():
-            raise DesktopDaemonError(
+            raise DesktopDaemonUnavailable(
                 "The sing-box desktop daemon is not running, start it with: "
-                "sudo systemctl start sing-box-daemon.service"
+                "sudo sbc service enable"
             )
+        timeout = float(_TIMEOUT)
+        if self._rpc_deadline is not None:
+            timeout = min(timeout, self._rpc_deadline - time.monotonic())
+            if timeout <= 0:
+                raise DesktopDaemonUnavailable(
+                    "Desktop lifecycle RPC deadline exceeded."
+                )
         try:
             import grpc  # type: ignore[import-not-found,import-untyped]
         except ImportError as e:
@@ -240,7 +277,7 @@ class DesktopDaemonServiceManager(ServiceManager):
             with grpc.insecure_channel(f"unix:{DAEMON_SOCKET}") as channel:
                 if stream:
                     replies: Any = channel.unary_stream(method)(
-                        request, metadata=_METADATA, timeout=_TIMEOUT
+                        request, metadata=_METADATA, timeout=timeout
                     )
                     try:
                         return bytes(next(iter(replies)))
@@ -248,7 +285,7 @@ class DesktopDaemonServiceManager(ServiceManager):
                         replies.cancel()
                 return bytes(
                     channel.unary_unary(method)(
-                        request, metadata=_METADATA, timeout=_TIMEOUT
+                        request, metadata=_METADATA, timeout=timeout
                     )
                 )
         except grpc.RpcError as e:
@@ -261,7 +298,8 @@ class DesktopDaemonServiceManager(ServiceManager):
                     "\nFor foreground debugging, stop the desktop app and services with: "
                     "sudo sbc run --force-cli"
                 )
-            raise DesktopDaemonError(
+            error = DesktopDaemonUnavailable if hint else DesktopDaemonError
+            raise error(
                 f"sing-box daemon call failed: {e.code().name} {e.details()}{hint}"
             ) from e
         except StopIteration as e:
@@ -298,6 +336,96 @@ class DesktopDaemonServiceManager(ServiceManager):
 
     def create_service(self) -> None:
         print("ℹ️ Autostart is managed by the desktop app's sing-box-daemon.service.")
+
+    def _wait_ready(self) -> None:
+        from . import debug
+
+        deadline = time.monotonic() + _LIFECYCLE_TIMEOUT
+        last_error = "daemon RPC is not ready"
+        state: dict[str, str] = {}
+        print("⏳ Waiting for desktop daemon RPC readiness.")
+        while (remaining := deadline - time.monotonic()) > 0:
+            state = debug._unit_state(
+                _DAEMON_SERVICE, timeout=min(debug._SYSTEMCTL_TIMEOUT, remaining)
+            )
+            if state["LoadState"] != "loaded":
+                raise DesktopDaemonError(
+                    f"Desktop daemon unit is not loaded: {state['LoadState']}"
+                )
+            if state["ActiveState"] == "failed" or (
+                state["ActiveState"] == "inactive" and state["Job"] in ("", "0")
+            ):
+                raise DesktopDaemonError(
+                    f"Desktop daemon startup failed: ActiveState={state['ActiveState']}; "
+                    "inspect journalctl -u sing-box-daemon.service."
+                )
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            if state["ActiveState"] == "active":
+                try:
+                    with invoking_user(), self._rpc_budget(min(1, remaining)):
+                        self._ensure_owner()
+                    return
+                except DesktopDaemonUnavailable as e:
+                    last_error = str(e)
+            time.sleep(min(0.1, max(0, deadline - time.monotonic())))
+        phase = (
+            "Desktop daemon is running but RPC is unresponsive"
+            if state.get("ActiveState") == "active"
+            else "Desktop daemon did not become ready"
+        )
+        raise DesktopDaemonError(f"{phase} within {_LIFECYCLE_TIMEOUT}s: {last_error}")
+
+    def enable_service(self) -> None:
+        if sys.platform != "linux":
+            return super().enable_service()
+        from . import debug
+
+        with self._lifecycle_guard():
+            with invoking_user():
+                request = self._start_request()
+            state = debug._unit_state(_DAEMON_SERVICE)
+            if state["LoadState"] != "loaded":
+                raise DesktopDaemonError(
+                    f"Desktop daemon unit is not loaded: {state['LoadState']}"
+                )
+            if state["ActiveState"] not in ("active", "activating"):
+                print("⏳ Desktop daemon is not running; starting it.")
+                debug._systemctl(["--no-block", "start", _DAEMON_SERVICE])
+            self._wait_ready()
+            print("⏳ Starting core with the selected desktop profile.")
+            with invoking_user():
+                self._call(_START_SERVICE, request)
+
+    def _stop_core_verified(self) -> None:
+        # All RPCs and polling share one budget, including ownership and stop.
+        with invoking_user(), self._rpc_budget(_LIFECYCLE_TIMEOUT):
+            self._ensure_owner()
+            if self._service_status()[0] != _STATUS_IDLE:
+                print("⏳ Stopping desktop core.")
+                self._call(_STOP_SERVICE)
+                print("⏳ Verifying desktop core is stopped.")
+                while self._service_status()[0] != _STATUS_IDLE:
+                    remaining = (self._rpc_deadline or 0) - time.monotonic()
+                    if remaining <= 0:
+                        raise DesktopDaemonError("Core stop verification timed out.")
+                    time.sleep(min(0.1, remaining))
+        print("✋ Core stopped (verified through RPC).")
+
+    def disable_service(self) -> str:
+        if sys.platform != "linux":
+            return super().disable_service()
+        from . import debug
+
+        with self._lifecycle_guard():
+            try:
+                self._stop_core_verified()
+            except DesktopDaemonError as e:
+                print(f"⚠️ Cannot confirm core shutdown through RPC: {e}")
+                print("⏳ Continuing with system-level desktop daemon shutdown.")
+            debug._stop_units((_DAEMON_SERVICE,))
+        return "Core and desktop daemon stopped."
 
     def check_service(self) -> bool:
         return True

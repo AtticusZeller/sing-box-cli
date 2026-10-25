@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## unreleased
+
+### Fixed
+
+- *(service)* Make Linux desktop `service enable` start the installed daemon, wait for RPC readiness and start the selected core. Make `service disable` verify core shutdown before stopping the daemon, with system-level shutdown even when RPC fails, bounded waits and verified process exit. Report actual lifecycle results without claiming autostart changes; keep restart/stop, standalone and Windows behavior unchanged (#44)
+
 ## 0.1.14 - 2026-10-25
 
 ### Fixed
