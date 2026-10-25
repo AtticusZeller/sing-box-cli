@@ -30,6 +30,7 @@ def test_command_startup(
     monkeypatch.setattr("typer.get_app_dir", lambda *a, **kw: str(tmp_path))
     monkeypatch.setattr(ConfigHandler, "_detect_desktop_app", lambda self: desktop)
     service = Mock()
+    service.requires_root = False
     service.version.return_value = "sing-box test-core"
     service.status.return_value = "running"
     monkeypatch.setattr(main, "create_service", lambda cfg: service)
