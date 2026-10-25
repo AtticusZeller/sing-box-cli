@@ -2,7 +2,7 @@
 
 Implementation and automated evidence for [issue #44](https://github.com/AtticusZeller/sing-box-cli/issues/44)
 are preserved in [log.md](log.md). The command contract is in [overview.md](overview.md).
-Local source contains the fix; no release has been made for this issue.
+Target version: v0.1.15. The manual checks below remain pending.
 
 ## Validate complete lifecycle on the affected Linux desktop
 
@@ -10,7 +10,7 @@ Local source contains the fix; no release has been made for this issue.
 
 **Change**
 
-- [ ] Use a build containing the #44 lifecycle changes and the existing desktop
+- [ ] Use v0.1.15 or a later build containing the #44 lifecycle changes and the existing desktop
   settings/profile. This check interrupts proxy networking and is user-run.
 
 **Verification**

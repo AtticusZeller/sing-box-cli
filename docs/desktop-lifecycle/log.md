@@ -137,3 +137,13 @@ introduce broad process-name killing or a competing standalone unit.
   The only runtime claim left open is actual desktop/TUN recovery. Memory is
   generated/read-only and was not modified. Existing unrelated worktrees were
   not touched. Formatter-only changes to tests/api/test_monitor.py were reverted.
+
+### Release preparation
+
+- The user authorized commit, push and publication on 2026-10-25, with manual
+  verification to follow on their machine. Fix commit: `e136cc2`.
+- Prepared v0.1.15 using the repository patch-bump workflow and curated changelog;
+  the annotated tag triggers CI tests, packaging, PyPI and GitHub Release.
+  Publication results are verified separately in the release handoff.
+- Actual desktop lifecycle and TUN recovery remain pending; no real services
+  were operated locally during implementation or release preparation.

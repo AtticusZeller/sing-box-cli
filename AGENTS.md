@@ -55,9 +55,8 @@ Building locally from the sdist (`uv build`) may need `GOFLAGS=-buildvcs=false`.
 
 ## State
 
-0.1.14 (2026-10-25) fixes blocking desktop takeover with non-blocking stop jobs
-and direct TERM/KILL of verified service processes.
-Unreleased #44 adds complete Linux desktop enable/disable; real-machine lifecycle
-verification is pending in `docs/desktop-lifecycle/plan.md`.
+0.1.15 (2026-10-25) adds complete Linux desktop enable/disable (#44).
+Real-machine lifecycle verification is pending in `docs/desktop-lifecycle/plan.md`.
+Desktop debug takeover uses non-blocking stop jobs and verified process TERM/KILL.
 Real-machine takeover/TUN/cache validation is pending in `docs/desktop-debug/plan.md`.
 Not verified at runtime: the Windows service paths against a real SCM.
