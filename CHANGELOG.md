@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.1.16 - 2026-10-26
+
+### Fixed
+
+- *(cli)* Prevent Windows legacy-console UnicodeEncodeError by replacing unrepresentable output characters without changing the stream encoding. Remove automatic configuration banners and keep version reads free of first-use initialization messages (#43, #46)
+
+### Tests
+
+- *(cli)* Add strict cp1252/UTF-8 startup regressions and Windows PowerShell CLI smoke tests across Python 3.11–3.14
+
 ## 0.1.15 - 2026-10-25
 
 ### Fixed
