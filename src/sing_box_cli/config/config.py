@@ -114,7 +114,6 @@ class ConfigHandler:
             else:
                 self._profile = legacy_profile(self._config_dir)
         self._load_config_file()
-        print(self)
 
     def _detect_desktop_app(self) -> bool:
         # Lazy import: the service package imports this module.
