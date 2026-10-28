@@ -1164,11 +1164,11 @@ wheels = [
 
 [[package]]
 name = "sing-box-bin"
-version = "1.14.3"
+version = "1.14.4"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/98/30/a8ad752e47ee6671fedb9978a99522cb313d8678a96b617ded3dd6079b71/sing_box_bin-1.14.3.tar.gz", hash = "sha256:3c19600ba488752481f25d23fec93c9fefc8de900ff353da5bc78e723f15700c", size = 47290357, upload-time = "2026-10-10T03:20:12.092Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/8f/8b/97302e17139186caa9c6f9e9bd10448d260c20ef7918ed9cdfc01ec3dc2f/sing_box_bin-1.14.4.tar.gz", hash = "sha256:fe385046b4c1ef2fc18e00d7ce49df93f277259c1c1d6bf32d159d84ca445572", size = 47334963, upload-time = "2026-10-24T02:31:06.114Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e8/80/eb3667c52f566e090486dbe87101cc9ea7a95b11521a592a59e22540e4e2/sing_box_bin-1.14.3-py3-none-any.whl", hash = "sha256:046866e9a20b846a915e1edc7b47147e134b40a57b72ce8117e8a1327a009d4f", size = 46385274, upload-time = "2026-10-10T03:20:07.632Z" },
+    { url = "https://files.pythonhosted.org/packages/d3/20/09556eb5637fc8c646a7c16a1a85510560fd6b618fc4683a3c2fb64e426b/sing_box_bin-1.14.4-py3-none-any.whl", hash = "sha256:d02097d47b9d9239533920194a59b42487cbd596d56e9eecc4388e2aef0e0a39", size = 46436119, upload-time = "2026-10-24T02:31:02.344Z" },
 ]
 
 [[package]]
