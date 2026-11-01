@@ -192,7 +192,8 @@ sbc service restart --update              # sudo works too, it acts as the invok
 | `sudo sbc service disable` | stops and verifies the core, then stops and verifies the daemon; RPC failure still triggers system-level shutdown |
 | `service status/stop/restart` | query, stop and reload the daemon's core. `stop` retains the daemon; `restart` reloads in place and requires a running daemon |
 | `config update [URL]`, `--update` | refresh the profile selected in the app and record the refresh there. A new URL is saved to that profile once it downloads fine |
-| `--clear-cache`, `config clear_cache` | clear the daemon's working directory, like "clear data" in the app |
+| `--clear-cache`, `config clear_cache` | needs sudo; remove only the profile's cache file (`experimental.cache_file.path`, default `cache.db`) from the daemon's working directory. Tailscale state, Taildrop and dashboard data are kept |
+| `service restart --purge-data` | delete the daemon's working directory, like "clear data" in the app: Tailscale must log in again. Asks first; `--yes` skips the prompt |
 | `stats/conns/proxy/logs` | unchanged, the default API address comes from the profile |
 | `run` | requires `--force-cli` for explicit Linux foreground takeover |
 

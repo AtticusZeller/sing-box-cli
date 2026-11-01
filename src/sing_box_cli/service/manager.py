@@ -12,6 +12,8 @@ class ServiceManager:
     requires_root = True
     # Whether start() on a running service reloads it, so restart needs no stop.
     hot_reload = False
+    # Whether purge_data() exists: only the desktop daemon keeps such data.
+    supports_purge_data = False
 
     def __init__(self, config: ConfigHandler) -> None:
         self.config = config
@@ -57,6 +59,10 @@ class ServiceManager:
     def clear_cache(self) -> None:
         """Remove the cache database, the service is expected to be stopped."""
         self.config.clear_cache()
+
+    def purge_data(self) -> None:
+        """Delete the service's data besides the configuration; service stopped."""
+        raise NotImplementedError()
 
 
 class WindowsServiceManager(ServiceManager):
