@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import cast
+from typing import Annotated, cast
 
 import typer
 
@@ -11,6 +11,22 @@ __all__ = ["service", "SharedContext", "get_context_obj", "ensure_privileges"]
 
 
 service = typer.Typer(help="Service management commands")
+
+_PURGE_DATA_LOSS = (
+    "Tailscale node state (log in again), Taildrop files, dashboard data "
+    "and the daemon's saved configuration"
+)
+PurgeDataOption = Annotated[
+    bool,
+    typer.Option(
+        "--purge-data",
+        help=f'Desktop app: delete the daemon\'s working directory, like "clear data" '
+        f"in the app. Loses {_PURGE_DATA_LOSS}. Asks first.",
+    ),
+]
+YesOption = Annotated[
+    bool, typer.Option("--yes", "-y", help="Do not ask before --purge-data.")
+]
 
 
 @dataclass
@@ -56,13 +72,29 @@ def service_disable(ctx: typer.Context) -> None:
 def service_restart(
     ctx: typer.Context,
     update: UpdateConfigOption = False,
-    purge: ClearCacheOption = False,
+    clear_cache: ClearCacheOption = False,
+    purge_data: PurgeDataOption = False,
+    yes: YesOption = False,
 ) -> None:
     """Restart sing-box service, update configuration if needed, create service if not exists"""
     ctx_obj = get_context_obj(ctx)
     config = ctx_obj.config
     service = ctx_obj.service
     ensure_privileges(service)
+    if purge_data:
+        if not service.supports_purge_data:
+            print("❌ --purge-data is only for the sing-box desktop app.")
+            raise typer.Exit(1)
+        if not yes:
+            # Without a terminal the prompt reads EOF and aborts.
+            typer.confirm(
+                f"Delete the desktop daemon's working directory? "
+                f"This loses {_PURGE_DATA_LOSS}",
+                abort=True,
+            )
+    elif clear_cache:
+        # Removing the cache needs root on every backend; check before stopping.
+        ensure_root()
     if service.check_service():
         service.sync_service()
     else:
@@ -73,11 +105,13 @@ def service_restart(
         else:
             print("❌ Failed to update configuration.")
             raise typer.Exit(1)
-    if service.hot_reload and not purge:
+    if service.hot_reload and not (clear_cache or purge_data):
         service.restart()
     else:
         service.stop()
-        if purge:
+        if purge_data:
+            service.purge_data()  # the cache goes with it
+        elif clear_cache:
             service.clear_cache()
         service.start()
     print("🔥 Service restarted.")

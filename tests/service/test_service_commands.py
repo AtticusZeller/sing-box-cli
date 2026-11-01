@@ -124,6 +124,64 @@ def test_reloading_backend_still_stops_to_clear_the_cache(
     invoke(service, "restart", "--clear-cache")
 
     assert service.calls == ["sync_service", "stop", "config.clear_cache", "start"]
+    assert root_checks == ["root"]  # checked before the stop, removal needs it
+
+
+class PurgingRecorder(ReloadingRecorder):
+    supports_purge_data = True
+
+    def purge_data(self) -> None:
+        self.calls.append("purge_data")
+
+
+def test_purge_data_is_refused_by_backends_without_it(root_checks: list[str]) -> None:
+    service = ReloadingRecorder()
+    obj = SharedContext(config=service.config, service=service)
+
+    result = CliRunner().invoke(service_app, ["restart", "--purge-data", "-y"], obj=obj)
+
+    assert result.exit_code == 1
+    assert "only for the sing-box desktop app" in result.output
+    assert service.calls == []
+
+
+@pytest.mark.parametrize("args", [["-y"], ["--yes"]])
+def test_purge_data_with_yes_skips_the_prompt(
+    root_checks: list[str], args: list[str]
+) -> None:
+    service = PurgingRecorder()
+
+    invoke(service, "restart", "--purge-data", *args)
+
+    assert service.calls == ["sync_service", "stop", "purge_data", "start"]
+
+
+def test_purge_data_runs_after_confirmation(root_checks: list[str]) -> None:
+    service = PurgingRecorder()
+    obj = SharedContext(config=service.config, service=service)
+
+    result = CliRunner().invoke(
+        service_app, ["restart", "--purge-data", "--clear-cache"], obj=obj, input="y\n"
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Tailscale node state" in result.output
+    assert service.calls == ["sync_service", "stop", "purge_data", "start"]
+
+
+@pytest.mark.parametrize("answer", ["n\n", ""])  # "" is a non-interactive run
+def test_purge_data_is_aborted_without_confirmation(
+    root_checks: list[str], answer: str
+) -> None:
+    service = PurgingRecorder()
+    obj = SharedContext(config=service.config, service=service)
+
+    result = CliRunner().invoke(
+        service_app, ["restart", "--purge-data"], obj=obj, input=answer
+    )
+
+    assert result.exit_code == 1
+    assert service.calls == []  # nothing stopped or deleted
 
 
 @pytest.mark.parametrize("command", ["enable", "disable", "stop", "status"])

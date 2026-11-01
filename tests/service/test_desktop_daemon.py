@@ -47,6 +47,7 @@ class FakeDaemon(grpc.GenericRpcHandler):  # type: ignore[misc]
         self.hang_method: str | None = None
         self.stop_status = IDLE
         self.status_reads = 0
+        self.working_directory = ""
 
     def service(self, details: Any) -> Any:
         method = details.method.rsplit("/", 1)[-1]
@@ -74,6 +75,8 @@ class FakeDaemon(grpc.GenericRpcHandler):  # type: ignore[misc]
             return desktop._field_bytes(1, b"1.14.3") + desktop._field_varint(
                 2, self.ownership
             )
+        if method == "GetWorkingDirectory":
+            return desktop._field_bytes(1, self.working_directory.encode())
         self.calls.append(method)
         if method == "StartService":
             self.start_requests.append(request)
@@ -108,9 +111,26 @@ def app_dir(tmp_path: Path, make_settings_db: Callable[..., Path]) -> Path:
     return directory
 
 
-def _manager(app_dir: Path) -> DesktopDaemonServiceManager:
-    config: Any = SimpleNamespace(config_dir=app_dir, api_base_url="")
+def _manager(app_dir: Path, cache: str = "cache.db") -> DesktopDaemonServiceManager:
+    config: Any = SimpleNamespace(
+        config_dir=app_dir, api_base_url="", cache_file_path=cache
+    )
     return DesktopDaemonServiceManager(config)
+
+
+@pytest.fixture
+def work_dir(
+    daemon: FakeDaemon, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """The daemon's working directory with a cache and Tailscale state; runs "as root"."""
+    directory = tmp_path / "users" / "abc"
+    (directory / "tailscale").mkdir(parents=True)
+    (directory / "tailscale" / "tailscaled.state").write_text("node key")
+    (directory / "cache.db").write_bytes(b"bolt")
+    daemon.working_directory = str(directory)
+    monkeypatch.setattr(desktop, "ensure_root", lambda: None)
+    monkeypatch.setattr("sing_box_cli.service.ensure_root", lambda: None)
+    return directory
 
 
 def _options_of(request: bytes) -> dict[int, int | bytes]:
@@ -216,16 +236,38 @@ def test_ownership_is_checked(
     assert daemon.calls == []
 
 
-def test_clear_cache_stops_destroys_and_starts_again(
-    daemon: FakeDaemon, app_dir: Path
+def test_clear_cache_removes_only_the_cache_file(
+    daemon: FakeDaemon, app_dir: Path, work_dir: Path
 ) -> None:
     _manager(app_dir).clear_cache()
-    assert daemon.calls == ["StopService", "DestroyWorkingDirectory", "StartService"]
+
+    assert daemon.calls == ["StopService", "StartService"]
+    assert not (work_dir / "cache.db").exists()
+    assert (work_dir / "tailscale" / "tailscaled.state").read_text() == "node key"
 
     daemon.calls.clear()
     daemon.status = IDLE
-    _manager(app_dir).clear_cache()
-    assert daemon.calls == ["DestroyWorkingDirectory"]  # was not running: stay stopped
+    (work_dir / "sub").mkdir()
+    (work_dir / "sub" / "c.db").write_bytes(b"bolt")
+    _manager(app_dir, "sub/c.db").clear_cache()
+    assert daemon.calls == []  # was not running: stay stopped
+    assert not (work_dir / "sub" / "c.db").exists()
+
+
+@pytest.mark.parametrize("cache", ["../outside.db", "/tmp/outside.db"])
+def test_clear_cache_refuses_a_path_outside_the_working_directory(
+    daemon: FakeDaemon,
+    app_dir: Path,
+    work_dir: Path,
+    cache: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(typer.Exit):
+        _manager(app_dir, cache).clear_cache()
+
+    assert "outside the daemon's working directory" in capsys.readouterr().out
+    assert daemon.calls == []  # not even stopped
+    assert (work_dir / "cache.db").exists()
 
 
 def test_restart_command_reloads_in_place(daemon: FakeDaemon, app_dir: Path) -> None:
@@ -238,11 +280,24 @@ def test_restart_command_reloads_in_place(daemon: FakeDaemon, app_dir: Path) -> 
 
 
 def test_restart_with_clear_cache_goes_through_a_stop(
-    daemon: FakeDaemon, app_dir: Path
+    daemon: FakeDaemon, app_dir: Path, work_dir: Path
 ) -> None:
     obj = SharedContext(config=_manager(app_dir).config, service=_manager(app_dir))
 
     result = CliRunner().invoke(service_app, ["restart", "--clear-cache"], obj=obj)
+
+    assert result.exit_code == 0, result.output
+    assert daemon.calls == ["StopService", "StartService"]
+    assert not (work_dir / "cache.db").exists()
+    assert (work_dir / "tailscale" / "tailscaled.state").exists()
+
+
+def test_restart_with_purge_data_destroys_the_working_directory(
+    daemon: FakeDaemon, app_dir: Path
+) -> None:
+    obj = SharedContext(config=_manager(app_dir).config, service=_manager(app_dir))
+
+    result = CliRunner().invoke(service_app, ["restart", "--purge-data", "-y"], obj=obj)
 
     assert result.exit_code == 0, result.output
     assert daemon.calls == ["StopService", "DestroyWorkingDirectory", "StartService"]

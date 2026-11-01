@@ -80,6 +80,19 @@ class SingBoxConfig(ConfigModel):
     model_config = ConfigDict(extra="allow")
 
 
+def remove_cache_db(path: Path) -> None:
+    """Remove a cache database and report the outcome; failures do not raise."""
+    try:
+        path.unlink(missing_ok=False)
+        print("🗑️ Cache database removed.")
+    except FileNotFoundError:
+        print("❌ Cache database not found.")
+    except PermissionError:
+        print("❌ Permission denied to remove cache database. Stop the service first.")
+    except Exception as e:
+        print(f"❌ Failed to remove cache database: {e}")
+
+
 class ConfigHandler:
     def __init__(self) -> None:
         self._config_dir = (
@@ -216,21 +229,17 @@ class ConfigHandler:
         return self._config_dir.absolute()
 
     @property
-    def cache_db(self) -> Path:
-        """Get the cache database path, parsed from config if available."""
-        if (
-            self._sing_box_config.experimental
-            and self._sing_box_config.experimental.cache_file
-            and self._sing_box_config.experimental.cache_file.path
-        ):
-            cache_path = self._sing_box_config.experimental.cache_file.path
-            # If it's a relative path, make it relative to config dir
-            if not Path(cache_path).is_absolute():
-                return self._config_dir / cache_path
-            return Path(cache_path)
+    def cache_file_path(self) -> str:
+        """The profile's cache file as written, relative to the core's working directory."""
+        experimental = self._sing_box_config.experimental
+        if experimental and experimental.cache_file and experimental.cache_file.path:
+            return experimental.cache_file.path
+        return "cache.db"  # sing-box's default
 
-        # Default fallback
-        return self._config_dir / "cache.db"
+    @property
+    def cache_db(self) -> Path:
+        """The cache database of the standalone core, which runs in the config dir."""
+        return self._config_dir / self.cache_file_path
 
     @property
     def api_base_url(self) -> str:
@@ -401,17 +410,7 @@ class ConfigHandler:
 
     def clear_cache(self) -> None:
         """Remove the cache database file."""
-        try:
-            self.cache_db.unlink(missing_ok=False)
-            print("🗑️ Cache database removed.")
-        except FileNotFoundError:
-            print("❌ Cache database not found.")
-        except PermissionError:
-            print(
-                "❌ Permission denied to remove cache database. Stop the service first."
-            )
-        except Exception as e:
-            print(f"❌ Failed to remove cache database: {e}")
+        remove_cache_db(self.cache_db)
 
     def __str__(self) -> str:
         """Return a string representation of the configuration."""

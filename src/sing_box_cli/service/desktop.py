@@ -27,6 +27,7 @@ from typing import Any
 import typer
 
 from ..common import ensure_root
+from ..config.config import remove_cache_db
 from ..config.store import SettingsError, active_profile, invoking_user, settings_query
 from .manager import ServiceManager
 
@@ -40,6 +41,7 @@ _METADATA = (("accept-language", "en-US"),)
 
 _GET_DAEMON_INFO = "/desktop.DesktopService/GetDaemonInfo"
 _START_SERVICE = "/desktop.DesktopService/StartService"
+_GET_WORKING_DIRECTORY = "/desktop.DesktopService/GetWorkingDirectory"
 _DESTROY_WORKING_DIRECTORY = "/desktop.DesktopService/DestroyWorkingDirectory"
 _STOP_SERVICE = "/daemon.ManagedService/StopService"
 _SUBSCRIBE_SERVICE_STATUS = "/daemon.StartedService/SubscribeServiceStatus"
@@ -218,6 +220,7 @@ class DesktopDaemonServiceManager(ServiceManager):
     requires_root = False
     # Starting a running service reloads it in place, no stop needed.
     hot_reload = True
+    supports_purge_data = True
     _rpc_deadline: float | None = None
 
     @contextmanager
@@ -446,20 +449,46 @@ class DesktopDaemonServiceManager(ServiceManager):
         self.start()
 
     def clear_cache(self) -> None:
-        """Clear the daemon's working directory, as "clear data" in the desktop app.
+        """Remove only the profile's cache file from the daemon's working directory.
 
-        The cache database lives in a root-owned directory only the daemon can
-        remove. The service must be stopped first and is brought back if it ran.
+        The daemon has no RPC for a single file and the directory is root-only, so
+        the file is removed as root. Tailscale state, Taildrop and the dashboard
+        next to it are kept. The service is stopped around it if it ran.
         """
         with self._guard():
             self._ensure_owner()
+            info = decode_fields(self._call(_GET_WORKING_DIRECTORY))
+            if not (path := _as_text(info.get(1))):
+                raise DesktopDaemonError(
+                    "sing-box daemon returned no working directory"
+                )
+            directory = Path(path)
             was_running = self._service_status()[0] != _STATUS_IDLE
-            if was_running:
+        ensure_root()
+        # The core resolves relative paths against the working directory and,
+        # outside insecure mode, refuses anything beyond it. Refuse the same.
+        cache = (directory / self.config.cache_file_path).resolve()
+        if not cache.is_relative_to(directory.resolve()):
+            print(f"❌ {cache} is outside the daemon's working directory, not removed.")
+            raise typer.Exit(1)
+        if was_running:
+            with self._guard():
                 self._call(_STOP_SERVICE)
-            self._call(_DESTROY_WORKING_DIRECTORY)
-            print("🗑️ Cache database removed.")
-            if was_running:
+        remove_cache_db(cache)
+        if was_running:
+            with self._guard():
                 self._call(_START_SERVICE, self._start_request())
+
+    def purge_data(self) -> None:
+        """Delete the daemon's working directory, as "clear data" in the desktop app.
+
+        Besides the cache this loses Tailscale node state, Taildrop files and
+        dashboard data. The service must be stopped.
+        """
+        with self._guard():
+            self._ensure_owner()
+            self._call(_DESTROY_WORKING_DIRECTORY)
+            print("🗑️ Daemon working directory cleared.")
 
     def status(self) -> str:
         with self._guard():

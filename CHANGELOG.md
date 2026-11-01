@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## unreleased
+
+### Fixed
+
+- *(service)* **Behavior change:** with the Linux desktop app, `--clear-cache` / `config clear_cache` now remove only the profile's cache file from the daemon's working directory, as in standalone mode, instead of the whole directory. Tailscale node state, Taildrop and dashboard data survive. It needs sudo, and refuses a cache path outside the working directory (#50)
+
+### Added
+
+- *(service)* `service restart --purge-data` keeps the old behavior, deleting the daemon's working directory like "clear data" in the app. It asks for confirmation, `--yes` skips it (#50)
+
 ## 0.1.16 - 2026-10-26
 
 ### Fixed
