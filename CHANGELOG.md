@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## unreleased
+## 0.1.17 - 2026-10-31
 
 ### Fixed
 
@@ -11,6 +11,10 @@ All notable changes to this project will be documented in this file.
 ### Added
 
 - *(service)* `service restart --purge-data` keeps the old behavior, deleting the daemon's working directory like "clear data" in the app. It asks for confirmation, `--yes` skips it (#50)
+
+### Changed
+
+- *(deps)* Upgrade the locked core `sing-box-bin` from 1.14.3 to 1.14.4 (#47)
 
 ## 0.1.16 - 2026-10-26
 
