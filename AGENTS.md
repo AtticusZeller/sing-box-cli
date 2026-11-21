@@ -39,6 +39,9 @@ lift it without checking why. `sing-box-bin>=1.13` has no upper version bound.
   `stop`/`restart` only control the core. Autostart policy remains app-owned.
 - Subscription tokens live inside the stored URL (`?token=`), are sent as a bearer
   token and are never printed or logged.
+- No code comments or docstrings: the `no-comments` pre-commit hook rejects new ones.
+  Express intent with names, types and tests; `# KEEP: <reason> (<link>)` only for
+  external constraints the code cannot express. typer help text goes in `help=`.
 - Commits: Conventional Commits with a scope. PRs are squash-merged.
 - `tests/api/test_monitor.py` gets reformatted by `scripts/format.sh`; that change is
   not part of any commit, revert it.
