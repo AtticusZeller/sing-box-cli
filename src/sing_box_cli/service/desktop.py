@@ -1,18 +1,3 @@
-"""Service backend for the sing-box desktop app (Linux).
-
-The desktop app installs ``sing-box-daemon.service``, a root daemon that exposes a
-gRPC API on a unix socket. This backend drives that daemon instead of creating a
-systemd unit of its own, which would fight the daemon over TUN and the API port.
-
-``grpcio`` is optional (``sing-box-cli[desktop]``) and imported lazily, so machines
-without the desktop app never load it. Messages are tiny, so the protobuf wire
-format is encoded by hand instead of depending on ``protobuf``.
-
-The daemon only talks to the user who owns it, identified by uid. Under ``sudo``
-everything here therefore runs as the invoking user (:func:`invoking_user`). The
-profile and the start options come from the app's settings (``config.store``).
-"""
-
 import json
 import os
 import stat
@@ -21,6 +6,7 @@ import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from enum import IntEnum
 from pathlib import Path
 from typing import Any
 
@@ -46,40 +32,54 @@ _DESTROY_WORKING_DIRECTORY = "/desktop.DesktopService/DestroyWorkingDirectory"
 _STOP_SERVICE = "/daemon.ManagedService/StopService"
 _SUBSCRIBE_SERVICE_STATUS = "/daemon.StartedService/SubscribeServiceStatus"
 
-# desktop.DaemonOwnership
-_OWNERSHIP_AVAILABLE = 1
-_OWNERSHIP_OTHER = 3
+_START_SERVICE_REQUEST_CONFIG_CONTENT = 1
+_START_SERVICE_REQUEST_OPTIONS = 2
+_START_OPTIONS_OOM_KILLER_ENABLED = 1
+_START_OPTIONS_OOM_KILLER_DISABLED = 2
+_START_OPTIONS_OOM_MEMORY_LIMIT = 3
+_START_OPTIONS_POWER_REPORT_ENABLED = 4
 
-# daemon.ServiceStatus.Type
-_STATUS_NAMES = {0: "Stopped", 1: "Starting", 2: "Running", 3: "Stopping", 4: "Fatal"}
-_STATUS_IDLE = 0
+
+class DaemonOwnership(IntEnum):
+    AVAILABLE = 1
+    CALLER = 2
+    OTHER = 3
+
+
+class ServiceStatusType(IntEnum):
+    IDLE = 0
+    STARTING = 1
+    STARTED = 2
+    STOPPING = 3
+    FATAL = 4
+
+
+_STATUS_NAMES: dict[int, str] = {
+    ServiceStatusType.IDLE: "Stopped",
+    ServiceStatusType.STARTING: "Starting",
+    ServiceStatusType.STARTED: "Running",
+    ServiceStatusType.STOPPING: "Stopping",
+    ServiceStatusType.FATAL: "Fatal",
+}
 
 
 @dataclass(frozen=True)
 class StartOptions:
-    """Start options of the service, the app keeps them in its preferences.
-
-    The daemon cannot report the options of the running service, so they are read
-    from the same preferences the app uses, with the app's own defaults.
-    """
+    """KEEP: the daemon has no RPC that returns the running StartOptions, so they are read from the app's preferences (https://github.com/SagerNet/sing-box/blob/v1.14.4/experimental/boxdd/desktop_service.proto#L9-L38)."""
 
     oom_killer_enabled: bool = False
-    # the app's "kill connections" preference, inverted
     oom_killer_disabled: bool = True
     oom_memory_limit_mb: int = 50
     power_report_enabled: bool = False
 
 
-class DesktopDaemonError(Exception):
-    """The desktop daemon cannot be driven; the message tells the user why."""
+class DesktopDaemonError(Exception): ...
 
 
-class DesktopDaemonUnavailable(DesktopDaemonError):
-    """A missing socket or transient RPC error while waiting for readiness."""
+class DesktopDaemonUnavailable(DesktopDaemonError): ...
 
 
 def desktop_daemon_available() -> bool:
-    """Whether the daemon is listening on its socket."""
     try:
         return stat.S_ISSOCK(DAEMON_SOCKET.stat().st_mode)
     except OSError:
@@ -87,12 +87,6 @@ def desktop_daemon_available() -> bool:
 
 
 def desktop_app_installed() -> bool:
-    """Whether the desktop app is on this machine, running or not.
-
-    Used to pick the desktop backend, so a stopped daemon is reported instead of
-    creating a competing service. Windows uses the installed service/installer
-    registry keys; Linux uses the unit/socket. Neither loads grpc.
-    """
     if sys.platform == "win32":
         from .desktop_windows import desktop_app_installed as windows_app_installed
 
@@ -101,7 +95,6 @@ def desktop_app_installed() -> bool:
 
 
 def read_start_options(config_dir: Path) -> StartOptions:
-    """The start options set in the app. A preference never set has the app's default."""
     names = (
         "oom_killer_enabled",
         "oom_killer_kill_connections",
@@ -172,21 +165,23 @@ def _field_bytes(number: int, payload: bytes) -> bytes:
 def encode_start_request(
     config_content: str, options: StartOptions | None = None
 ) -> bytes:
-    """desktop.StartServiceRequest{config_content, options: desktop.StartOptions}"""
     opts = options or StartOptions()
     body = b""
     if opts.oom_killer_enabled:
-        body += _field_varint(1, 1)
+        body += _field_varint(_START_OPTIONS_OOM_KILLER_ENABLED, 1)
     if opts.oom_killer_disabled:
-        body += _field_varint(2, 1)
-    body += _field_varint(3, opts.oom_memory_limit_mb * 1024 * 1024)
+        body += _field_varint(_START_OPTIONS_OOM_KILLER_DISABLED, 1)
+    body += _field_varint(
+        _START_OPTIONS_OOM_MEMORY_LIMIT, opts.oom_memory_limit_mb * 1024 * 1024
+    )
     if opts.power_report_enabled:
-        body += _field_varint(4, 1)
-    return _field_bytes(1, config_content.encode("utf-8")) + _field_bytes(2, body)
+        body += _field_varint(_START_OPTIONS_POWER_REPORT_ENABLED, 1)
+    return _field_bytes(
+        _START_SERVICE_REQUEST_CONFIG_CONTENT, config_content.encode("utf-8")
+    ) + _field_bytes(_START_SERVICE_REQUEST_OPTIONS, body)
 
 
 def decode_fields(data: bytes) -> dict[int, int | bytes]:
-    """Decode a flat protobuf message into ``{field number: varint | bytes}``."""
     fields: dict[int, int | bytes] = {}
     pos = 0
     while pos < len(data):
@@ -216,10 +211,9 @@ def _as_int(value: int | bytes | None) -> int:
 
 
 class DesktopDaemonServiceManager(ServiceManager):
-    # The daemon only accepts its owning user, sudo is handled by invoking_user().
     requires_root = False
-    # Starting a running service reloads it in place, no stop needed.
-    hot_reload = True
+    # KEEP: StartService on a running core reloads it in place (https://github.com/SagerNet/sing-box/blob/v1.14.4/experimental/boxdd/server.go#L239)
+    restarts_in_place = True
     supports_purge_data = True
     _rpc_deadline: float | None = None
 
@@ -234,7 +228,6 @@ class DesktopDaemonServiceManager(ServiceManager):
 
     @contextmanager
     def _lifecycle_guard(self) -> Iterator[None]:
-        # Systemd and process signals run as root, RPC/profile reads as the user.
         from .debug import DebugTakeoverError
 
         ensure_root()
@@ -318,11 +311,11 @@ class DesktopDaemonServiceManager(ServiceManager):
                 "run as that user (or with sudo from it)."
             )
         ownership = _as_int(self._daemon_info().get(2))
-        if ownership == _OWNERSHIP_AVAILABLE:
+        if ownership == DaemonOwnership.AVAILABLE:
             raise DesktopDaemonError(
                 "The desktop daemon has no owner yet, open the sing-box app once."
             )
-        if ownership == _OWNERSHIP_OTHER:
+        if ownership == DaemonOwnership.OTHER:
             raise DesktopDaemonError("The desktop daemon is owned by another user.")
 
     def _service_status(self) -> tuple[int, str]:
@@ -330,7 +323,6 @@ class DesktopDaemonServiceManager(ServiceManager):
         return _as_int(reply.get(1)), _as_text(reply.get(2))
 
     def _start_request(self) -> bytes:
-        """The active profile with the start options configured in the app."""
         config_dir = self.config.config_dir
         profile = active_profile(config_dir)
         return encode_start_request(
@@ -402,14 +394,13 @@ class DesktopDaemonServiceManager(ServiceManager):
                 self._call(_START_SERVICE, request)
 
     def _stop_core_verified(self) -> None:
-        # All RPCs and polling share one budget, including ownership and stop.
         with invoking_user(), self._rpc_budget(_LIFECYCLE_TIMEOUT):
             self._ensure_owner()
-            if self._service_status()[0] != _STATUS_IDLE:
+            if self._service_status()[0] != ServiceStatusType.IDLE:
                 print("⏳ Stopping desktop core.")
                 self._call(_STOP_SERVICE)
                 print("⏳ Verifying desktop core is stopped.")
-                while self._service_status()[0] != _STATUS_IDLE:
+                while self._service_status()[0] != ServiceStatusType.IDLE:
                     remaining = (self._rpc_deadline or 0) - time.monotonic()
                     if remaining <= 0:
                         raise DesktopDaemonError("Core stop verification timed out.")
@@ -434,7 +425,6 @@ class DesktopDaemonServiceManager(ServiceManager):
         return True
 
     def start(self) -> None:
-        # Starting while running is a hot reload, same as the desktop app does.
         with self._guard():
             self._ensure_owner()
             self._call(_START_SERVICE, self._start_request())
@@ -442,19 +432,14 @@ class DesktopDaemonServiceManager(ServiceManager):
     def stop(self) -> None:
         with self._guard():
             self._ensure_owner()
-            if self._service_status()[0] != _STATUS_IDLE:
+            if self._service_status()[0] != ServiceStatusType.IDLE:
                 self._call(_STOP_SERVICE)
 
     def restart(self) -> None:
         self.start()
 
     def clear_cache(self) -> None:
-        """Remove only the profile's cache file from the daemon's working directory.
-
-        The daemon has no RPC for a single file and the directory is root-only, so
-        the file is removed as root. Tailscale state, Taildrop and the dashboard
-        next to it are kept. The service is stopped around it if it ran.
-        """
+        """KEEP: the daemon has no RPC to delete a single file and its working directory is root-only, so the cache file is removed as root (https://github.com/SagerNet/sing-box/blob/v1.14.4/experimental/boxdd/desktop_service.proto#L14-L15, #51)."""
         with self._guard():
             self._ensure_owner()
             info = decode_fields(self._call(_GET_WORKING_DIRECTORY))
@@ -463,10 +448,9 @@ class DesktopDaemonServiceManager(ServiceManager):
                     "sing-box daemon returned no working directory"
                 )
             directory = Path(path)
-            was_running = self._service_status()[0] != _STATUS_IDLE
+            was_running = self._service_status()[0] != ServiceStatusType.IDLE
         ensure_root()
-        # The core resolves relative paths against the working directory and,
-        # outside insecure mode, refuses anything beyond it. Refuse the same.
+        # KEEP: the core resolves the cache path against its working directory and refuses paths outside it unless insecure mode is on (https://github.com/SagerNet/sing-box/blob/v1.14.4/experimental/boxdd/insecure_mode_supported.go#L54-L105)
         cache = (directory / self.config.cache_file_path).resolve()
         if not cache.is_relative_to(directory.resolve()):
             print(f"❌ {cache} is outside the daemon's working directory, not removed.")
@@ -480,11 +464,6 @@ class DesktopDaemonServiceManager(ServiceManager):
                 self._call(_START_SERVICE, self._start_request())
 
     def purge_data(self) -> None:
-        """Delete the daemon's working directory, as "clear data" in the desktop app.
-
-        Besides the cache this loses Tailscale node state, Taildrop files and
-        dashboard data. The service must be stopped.
-        """
         with self._guard():
             self._ensure_owner()
             self._call(_DESTROY_WORKING_DIRECTORY)
@@ -496,7 +475,7 @@ class DesktopDaemonServiceManager(ServiceManager):
             code, message = self._service_status()
             name = _STATUS_NAMES.get(code, f"Unknown({code})")
             return f"{name}: {message}" if message else name
-        return ""  # unreachable, _guard exits
+        return ""
 
     def disable(self) -> None:
         print("ℹ️ Autostart is managed by the desktop app's sing-box-daemon.service.")
@@ -504,4 +483,4 @@ class DesktopDaemonServiceManager(ServiceManager):
     def version(self) -> str:
         with self._guard():
             return f"sing-box {_as_text(self._daemon_info().get(1))} (desktop daemon)"
-        return ""  # unreachable, _guard exits
+        return ""

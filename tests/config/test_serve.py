@@ -210,6 +210,20 @@ def test_real_core_accepts_configuration(content: bytes) -> None:
     backend.validate_config(content)
 
 
+def test_core_output_is_not_relayed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        backend.subprocess,
+        "run",
+        lambda *a, **kw: subprocess.CompletedProcess(
+            args=[], returncode=1, stdout=b"secret", stderr=b"secret"
+        ),
+    )
+    with pytest.raises(backend.ServeError) as error:
+        backend.validate_config(VALID_CONFIG)
+    assert error.value.status == 422
+    assert "secret" not in str(error.value)
+
+
 def test_registration_and_list_cli(
     cli_environment: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -399,6 +413,20 @@ def test_http_passthrough_updates_deletions_and_validation(
         )
 
 
+def test_http_requests_are_not_logged(
+    http_service: tuple[str, dict[str, bytes]], capfd: pytest.CaptureFixture[str]
+) -> None:
+    url, _files = http_service
+    with httpx.Client(base_url=url, trust_env=False) as client:
+        client.get(
+            "/alice.json?token=old-client-token",
+            headers={"Authorization": "Bearer old-client-token"},
+        )
+    err = capfd.readouterr().err
+    assert "old-client-token" not in err
+    assert "alice.json" not in err
+
+
 def test_existing_downloader_requires_subscription_token(
     http_service: tuple[str, dict[str, bytes]],
 ) -> None:
@@ -464,7 +492,6 @@ def test_detached_start_stop_and_stale_state(cli_environment: Path) -> None:
         )
         assert result.exit_code == 0 and "Already running" in result.output
         assert process_state(cli_environment) == state
-        # Host is not registered: a live response without making any GitHub request.
         response = httpx.get(f"http://127.0.0.1:{port}/missing.json", trust_env=False)
         assert response.status_code == 401
         for _ in range(2):
@@ -483,7 +510,6 @@ def test_detached_start_stop_and_stale_state(cli_environment: Path) -> None:
         backend.write_json(cli_environment / "process.json", stale.model_dump())
         assert stop_server(cli_environment) is False
         assert unrelated.is_running()
-        # A stale PID does not prevent a new instance from starting.
         backend.write_json(cli_environment / "process.json", stale.model_dump())
         new_state, started = start_server(cli_environment, "127.0.0.1", port)
         assert started and new_state.instance != stale.instance

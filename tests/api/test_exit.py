@@ -204,13 +204,11 @@ def test_command_exit_status(
 
     result = CliRunner().invoke(api.api, [command])
     if error_type is httpx.ConnectError:
-        # API failures are reported, not dumped as a traceback
         assert result.exit_code == 1, result.output
         assert isinstance(result.exception, SystemExit)
         assert result.output.count("Error:") == 1
         assert "stopped" in result.output
     elif error_type in (RuntimeError, ValueError):
-        # programming errors (including pydantic ValidationError) still surface
         assert result.exit_code != 0
         assert isinstance(result.exception, error_type)
         assert "Exited." not in result.output
@@ -303,13 +301,27 @@ def test_unreachable_api_is_reported_without_traceback(
     assert fake_singbox.base_url in result.output
 
 
-def test_conns_exits_cleanly_after_singbox_stops(fake_singbox: FakeSingBox) -> None:
+def test_conns_exits_cleanly_after_repeated_failed_refreshes(
+    fake_singbox: FakeSingBox, monkeypatch: pytest.MonkeyPatch
+) -> None:
     async def scenario() -> None:
         client = SingBoxAPIClient(fake_singbox.base_url)
+        get_connections = client.get_connections
+        failed_refreshes = 0
+
+        async def count_failed_refreshes() -> ConnectionData:
+            nonlocal failed_refreshes
+            try:
+                return await get_connections()
+            except httpx.HTTPError:
+                failed_refreshes += 1
+                raise
+
+        monkeypatch.setattr(client, "get_connections", count_failed_refreshes)
         async with running_manager(ConnectionsManager, client) as (manager, pipe, task):
             fake_singbox.stop()
-            await wait_until(lambda: "Error refreshing" in manager.status_message)
-            await asyncio.sleep(1.5)  # let more refresh cycles hit the outage
+            await wait_until(lambda: failed_refreshes >= 3)
+            assert "Error refreshing" in manager.status_message
             pipe.send_text("\x11")
             assert await asyncio.wait_for(asyncio.shield(task), timeout=5) == "exited"
 

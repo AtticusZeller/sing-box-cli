@@ -1,5 +1,3 @@
-"""Explicit Linux desktop takeover; never depends on the desktop RPC service."""
-
 import os
 import signal
 import subprocess
@@ -26,8 +24,7 @@ _CGROUP_ROOT = Path("/sys/fs/cgroup")
 _PROC_ROOT = Path("/proc")
 
 
-class DebugTakeoverError(Exception):
-    """Takeover could not be verified; do not launch another core."""
+class DebugTakeoverError(Exception): ...
 
 
 def _process_uid(process: psutil.Process) -> int:
@@ -45,7 +42,6 @@ def _app_processes(uid: int) -> list[psutil.Process]:
                 continue
             for member in [process, *process.children(recursive=True)]:
                 if _process_uid(member) == uid:
-                    # Cache the identity before a later signal; psutil guards PID reuse.
                     member.create_time()
                     processes[member.pid] = member
         except psutil.NoSuchProcess:
@@ -134,12 +130,12 @@ def _assert_stopped(unit: str, state: dict[str, str]) -> None:
 def _assert_group_empty(unit: str, group: str) -> None:
     directory = _group_directory(unit, group)
     try:
-        # cgroup v2's populated flag includes all descendant groups.
+        # KEEP: cgroup v2's populated flag covers all descendant groups (https://docs.kernel.org/admin-guide/cgroup-v2.html)
         events = (directory / "cgroup.events").read_text()
     except FileNotFoundError:
         if directory.exists():
             raise DebugTakeoverError(f"Cannot read cgroup events for {unit}.")
-        return  # systemd removed the now-empty cgroup
+        return
     if "populated 0" not in events.splitlines():
         raise DebugTakeoverError(
             f"{unit} still has running processes: PIDs {sorted(_group_pids(directory))}"
@@ -162,14 +158,13 @@ def _group_directory(unit: str, group: str) -> Path:
 
 
 def _group_pids(directory: Path) -> set[int]:
-    """Read nested cgroups without swallowing permission or malformed-data errors."""
     try:
         content = (directory / "cgroup.procs").read_text()
         children = list(directory.iterdir())
     except FileNotFoundError:
         if directory.exists():
             raise DebugTakeoverError(f"Cannot read processes in {directory}")
-        return set()  # the whole group was removed after its last process exited
+        return set()
     try:
         pids = {int(line) for line in content.splitlines()}
     except ValueError as e:
@@ -204,7 +199,7 @@ def _managed_processes(groups: dict[str, str]) -> dict[int, tuple[psutil.Process
         for pid in _group_pids(_group_directory(unit, group)):
             try:
                 process = psutil.Process(pid)
-                process.create_time()  # psutil signals check this identity for PID reuse
+                process.create_time()
                 if _belongs_to_group(process, group):
                     processes[pid] = process, group
             except psutil.NoSuchProcess:
@@ -241,7 +236,6 @@ def _verify_stopped(
                     _SYSTEMCTL_TIMEOUT, max(0.001, deadline - time.monotonic())
                 )
                 _assert_stopped(unit, _unit_state(unit, timeout=timeout))
-                # Also check the original group if systemd has cleared ControlGroup.
                 if original["ControlGroup"]:
                     _assert_group_empty(unit, original["ControlGroup"])
             remaining = [
@@ -259,7 +253,6 @@ def _verify_stopped(
 
 
 def _stop_units(units: tuple[str, ...] | None = None) -> None:
-    """Stop and verify the requested units, independently of desktop RPC."""
     states = {unit: _unit_state(unit) for unit in (_UNITS if units is None else units)}
     groups: dict[str, str] = {}
     loaded = []
@@ -284,7 +277,6 @@ def _stop_units(units: tuple[str, ...] | None = None) -> None:
     for unit in loaded:
         print(f"⏳ Submitting non-blocking stop: {unit}")
         _systemctl(["--no-block", "stop", unit])
-    # Catch children created between the initial snapshot and stop-job submission.
     processes.update(_managed_processes(groups))
     print(f"⏳ Sending TERM to managed PIDs: {sorted(processes)}")
     signalled = _signal_managed(processes)
@@ -304,8 +296,6 @@ def _foreground(args: list[str]) -> int:
         returncode = child.wait()
         return returncode if returncode >= 0 else 128 - returncode
     except KeyboardInterrupt:
-        # The terminal normally signals both processes. Also handle SIGINT delivered
-        # only to sbc, and reap an unresponsive child before exiting.
         child.send_signal(signal.SIGINT)
         for stop in (child.terminate, child.kill):
             try:
@@ -318,7 +308,6 @@ def _foreground(args: list[str]) -> int:
 
 
 def run_desktop_debug(config: ConfigHandler, *, update: bool, purge: bool) -> None:
-    """Validate inputs, stop competing processes and run the bundled core."""
     if sys.platform != "linux":
         print("❌ --force-cli is supported on Linux only.")
         raise typer.Exit(1)
@@ -329,14 +318,12 @@ def run_desktop_debug(config: ConfigHandler, *, update: bool, purge: bool) -> No
         binary = Path(get_bin_path()).absolute()
         if not binary.is_file() or not os.access(binary, os.X_OK):
             raise DebugTakeoverError("The bundled sing-box core is not executable.")
-        # A missing profile must fail before stopping the desktop app.
         if config.config_file_content.strip() == "{}":
             raise DebugTakeoverError("Configuration file is empty.")
         subprocess.run(
             [str(binary), "version"], check=True, capture_output=True, timeout=_WAIT
         )
         if update:
-            # Update while the old core can still provide network access.
             with invoking_user():
                 if not config.update_config():
                     raise DebugTakeoverError("Failed to update configuration.")

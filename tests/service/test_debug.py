@@ -1,5 +1,3 @@
-"""Explicit desktop takeover without using gRPC or changing the host's services."""
-
 import importlib
 import os
 import signal
@@ -44,8 +42,7 @@ def config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     cfg.config_dir = tmp_path
     cfg.config_file = tmp_path / "profiles/p.json"
     cfg.config_file_content = '{"log": {}}'
-    # Deliberately wrong: fallback must not execute the desktop app on PATH.
-    cfg.bin_path = Path("/opt/sing-box/sing-box")
+    cfg.bin_path = debug._APP_EXECUTABLES[0]
     binary = tmp_path / "core"
     binary.write_text("fake core")
     binary.chmod(0o755)
@@ -54,7 +51,7 @@ def config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> MagicMock:
 
     monkeypatch.setattr(pwd, "getpwnam", lambda _: SimpleNamespace(pw_uid=1000))
     main = importlib.import_module("sing_box_cli.main")
-    monkeypatch.setattr(main, "get_config", lambda: cfg)
+    monkeypatch.setattr(main, "get_config", lambda **_: cfg)
     service = MagicMock()
     service.status.side_effect = AssertionError("must not call gRPC")
     service.stop.side_effect = AssertionError("must not call gRPC")
@@ -217,8 +214,9 @@ def test_termination_escalates_only_for_survivors(
 
 
 @pytest.fixture
-def managed_units(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
-    """A stop job stays deactivating until a direct signal ends its processes."""
+def units_deactivating_until_signalled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> SimpleNamespace:
     root = tmp_path / "cgroups"
     root.mkdir()
     (root / "cgroup.controllers").touch()
@@ -302,9 +300,10 @@ def managed_units(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> SimpleName
 
 
 def test_stalled_stop_job_is_finished_by_direct_term(
-    managed_units: SimpleNamespace, capsys: pytest.CaptureFixture[str]
+    units_deactivating_until_signalled: SimpleNamespace,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    env = managed_units
+    env = units_deactivating_until_signalled
     debug._stop_units()
     assert env.queued == ["sing-box-daemon.service"]
     env.processes[42].terminate.assert_called_once()
@@ -319,9 +318,9 @@ def test_stalled_stop_job_is_finished_by_direct_term(
 
 
 def test_ignored_term_escalates_for_verified_survivors(
-    managed_units: SimpleNamespace,
+    units_deactivating_until_signalled: SimpleNamespace,
 ) -> None:
-    env = managed_units
+    env = units_deactivating_until_signalled
     env.processes[42].terminate.side_effect = None
     debug._stop_units()
     env.processes[42].terminate.assert_called_once()
@@ -329,8 +328,10 @@ def test_ignored_term_escalates_for_verified_survivors(
     assert [call.kwargs["timeout"] for call in env.wait.call_args_list] == [3, 2]
 
 
-def test_nested_worker_is_included(managed_units: SimpleNamespace) -> None:
-    env = managed_units
+def test_nested_worker_is_included(
+    units_deactivating_until_signalled: SimpleNamespace,
+) -> None:
+    env = units_deactivating_until_signalled
     nested = env.directory / "worker"
     nested.mkdir()
     (nested / "cgroup.procs").write_text("43\n")
@@ -343,9 +344,9 @@ def test_nested_worker_is_included(managed_units: SimpleNamespace) -> None:
 
 @pytest.mark.parametrize("failure", ["show-timeout", "stop-timeout", "stop-command"])
 def test_service_manager_failure_names_command_and_never_signals(
-    failure: str, managed_units: SimpleNamespace
+    failure: str, units_deactivating_until_signalled: SimpleNamespace
 ) -> None:
-    env = managed_units
+    env = units_deactivating_until_signalled
 
     def fail(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         if (failure == "show-timeout" and args[1] == "show") or (
@@ -376,9 +377,11 @@ def test_service_manager_failure_names_command_and_never_signals(
     ],
 )
 def test_unverifiable_process_identity_prevents_stop_and_signals(
-    failure: str, managed_units: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+    failure: str,
+    units_deactivating_until_signalled: SimpleNamespace,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    env = managed_units
+    env = units_deactivating_until_signalled
     if failure == "missing-procs":
         (env.directory / "cgroup.procs").unlink()
     elif failure == "invalid-pids":
@@ -405,13 +408,11 @@ def test_unverifiable_process_identity_prevents_stop_and_signals(
 
 
 def test_exited_or_reused_identity_is_not_signalled(
-    managed_units: SimpleNamespace,
+    units_deactivating_until_signalled: SimpleNamespace,
 ) -> None:
-    env = managed_units
+    env = units_deactivating_until_signalled
     env.processes[42].is_running.return_value = False
 
-    # The stale cgroup snapshot still mentions this PID, but the cached identity
-    # is no longer running. It must not signal whatever reused that number.
     def stop(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         result = env.handler(args, **kwargs)
         if args[1] == "--no-block":
@@ -425,8 +426,10 @@ def test_exited_or_reused_identity_is_not_signalled(
     env.processes[42].kill.assert_not_called()
 
 
-def test_membership_is_rechecked_before_kill(managed_units: SimpleNamespace) -> None:
-    env = managed_units
+def test_membership_is_rechecked_before_kill(
+    units_deactivating_until_signalled: SimpleNamespace,
+) -> None:
+    env = units_deactivating_until_signalled
 
     def move() -> None:
         (env.proc_root / "42/cgroup").write_text("0::/user.slice/unrelated.scope\n")
@@ -438,9 +441,9 @@ def test_membership_is_rechecked_before_kill(managed_units: SimpleNamespace) -> 
 
 
 def test_stop_verification_retries_a_finishing_job(
-    managed_units: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+    units_deactivating_until_signalled: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    env = managed_units
+    env = units_deactivating_until_signalled
     polls = 0
 
     def finishing(
@@ -462,9 +465,9 @@ def test_stop_verification_retries_a_finishing_job(
 
 @pytest.mark.parametrize("failure", ["survivor", "new-worker", "pending-job"])
 def test_final_verification_rejects_survivors_or_pending_jobs(
-    failure: str, managed_units: SimpleNamespace
+    failure: str, units_deactivating_until_signalled: SimpleNamespace
 ) -> None:
-    env = managed_units
+    env = units_deactivating_until_signalled
     if failure == "survivor":
         env.processes[42].terminate.side_effect = None
         env.processes[42].kill.side_effect = None
@@ -494,10 +497,10 @@ def test_final_verification_rejects_survivors_or_pending_jobs(
 def test_stop_failure_cannot_clear_cache_or_launch_core(
     failure: str,
     config: MagicMock,
-    managed_units: SimpleNamespace,
+    units_deactivating_until_signalled: SimpleNamespace,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    env = managed_units
+    env = units_deactivating_until_signalled
     if failure == "survivor":
         env.processes[42].terminate.side_effect = None
         env.processes[42].kill.side_effect = None
@@ -630,7 +633,6 @@ def test_real_store_is_preserved(
     monkeypatch.setenv("USER", "")
     monkeypatch.setenv("SUDO_USER", "")
     monkeypatch.setattr(ConfigHandler, "user", property(lambda _: ""))
-    # ConfigHandler uses ~<user>; empty user resolves the test HOME.
     monkeypatch.setattr(desktop, "desktop_app_installed", lambda: True)
     cfg = ConfigHandler()
     assert cfg.init_directories()
@@ -641,7 +643,7 @@ def test_real_store_is_preserved(
     monkeypatch.setattr(pwd, "getpwnam", lambda _: SimpleNamespace(pw_uid=1000))
     monkeypatch.setattr(debug, "get_bin_path", lambda: sys.executable)
     main = importlib.import_module("sing_box_cli.main")
-    monkeypatch.setattr(main, "get_config", lambda: cfg)
+    monkeypatch.setattr(main, "get_config", lambda **_: cfg)
     monkeypatch.setattr(main, "ensure_root", lambda: None)
     result = CliRunner().invoke(main.app, ["run", "--force-cli"])
     assert result.exit_code == 0, result.output
@@ -651,12 +653,52 @@ def test_real_store_is_preserved(
 
 
 def test_daemon_only_stop_never_inspects_or_stops_standalone_unit(
-    managed_units: SimpleNamespace,
+    units_deactivating_until_signalled: SimpleNamespace,
 ) -> None:
-    env = managed_units
+    env = units_deactivating_until_signalled
     debug._stop_units(("sing-box-daemon.service",))
     assert env.queued == ["sing-box-daemon.service"]
     assert all(
         "sing-box.service" not in call.args[0] for call in env.run.call_args_list
     )
     env.processes[42].terminate.assert_called_once()
+
+
+def test_debug_takeover_never_imports_desktop_rpc() -> None:
+    script = (
+        "import sys, sing_box_cli.service.debug; "
+        "assert 'grpc' not in sys.modules; "
+        "assert 'sing_box_cli.service.desktop' not in sys.modules"
+    )
+    subprocess.run([sys.executable, "-c", script], check=True)
+
+
+def test_verification_checks_original_group_after_control_group_is_cleared(
+    units_deactivating_until_signalled: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = units_deactivating_until_signalled
+    monkeypatch.setattr(debug, "_unit_state", lambda unit, **kw: _state())
+    assert (env.directory / "cgroup.events").read_text() == "populated 1\n"
+    with pytest.raises(debug.DebugTakeoverError, match="still has running processes"):
+        debug._verify_stopped(
+            {"sing-box-daemon.service": _state(ControlGroup=env.group)}, {}
+        )
+
+
+def test_process_forked_before_stop_submission_is_signalled(
+    units_deactivating_until_signalled: SimpleNamespace,
+) -> None:
+    env = units_deactivating_until_signalled
+
+    def fork_then_stop(
+        args: list[str], **kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        if args[1] == "--no-block":
+            with (env.directory / "cgroup.procs").open("a") as procs:
+                procs.write("43\n")
+        return env.handler(args, **kwargs)
+
+    env.run.side_effect = fork_then_stop
+    debug._stop_units()
+    env.processes[42].terminate.assert_called_once()
+    env.processes[43].terminate.assert_called_once()

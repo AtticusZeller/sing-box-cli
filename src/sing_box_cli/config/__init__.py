@@ -10,7 +10,7 @@ from .config import get_config
 from .serve import serve
 from .utils import redact_url
 
-__all__ = ["config"]
+__all__ = ["config_app"]
 
 SubUrlArg = Annotated[
     StrOrNone, typer.Argument(help="Subscription URL, the saved one if omitted")
@@ -30,25 +30,26 @@ DryRunOption = Annotated[
         "--dry-run", help="Show configuration diff without saving or restarting."
     ),
 ]
-config = typer.Typer(help="Configuration management commands")
-config.add_typer(serve, name="serve")
+config_app = typer.Typer(help="Configuration management commands")
+config_app.add_typer(serve, name="serve")
 
 
-@config.callback()
+@config_app.callback()
 def config_callback(ctx: typer.Context) -> None:
     if ctx.invoked_subcommand not in ("serve", "update"):
         cfg = get_config(initialize=ctx.invoked_subcommand == "clear_cache")
         ctx.obj = SharedContext(config=cfg, service=create_service(cfg))
 
 
-@config.command("update")
+@config_app.command(
+    "update", help="Download configuration or preview its diff with --dry-run."
+)
 def config_update(
     url: SubUrlArg = None,
     token: TokenOption = None,
     restart: RestartServiceOption = False,
     dry_run: DryRunOption = False,
 ) -> None:
-    """Download configuration or preview its diff with --dry-run."""
     cfg = get_config(initialize=not dry_run)
     if not cfg.update_config(url, token, dry_run=dry_run):
         print("❌ Failed to update configuration.")
@@ -57,7 +58,6 @@ def config_update(
         service = create_service(cfg)
         if service.requires_root:
             ensure_root()
-        # init service
         if service.check_service():
             service.sync_service()
         else:
@@ -66,14 +66,16 @@ def config_update(
         service.restart()
 
 
-@config.command("get")
+@config_app.command(
+    "get",
+    help="Print configuration, or select the subscription URL with --subscription.",
+)
 def config_get(
     ctx: typer.Context,
     subscription: Annotated[
         bool, typer.Option("--subscription", help="Print the subscription URL.")
     ] = False,
 ) -> None:
-    """Print configuration, or select the subscription URL with --subscription."""
     cfg = get_context_obj(ctx).config
     if subscription:
         if cfg.sub_url:
@@ -84,20 +86,19 @@ def config_get(
         print(cfg.config_file_content)
 
 
-@config.command("show-sub", hidden=True)
+@config_app.command(
+    "show-sub", hidden=True, help="Compatibility alias for config get --subscription."
+)
 def config_show_sub(ctx: typer.Context) -> None:
-    """Compatibility alias for config get --subscription."""
     config_get(ctx, subscription=True)
 
 
-@config.command("show", hidden=True)
+@config_app.command("show", hidden=True, help="Compatibility alias for config get.")
 def config_show(ctx: typer.Context) -> None:
-    """Compatibility alias for config get."""
     config_get(ctx)
 
 
-@config.command("clear_cache")
+@config_app.command("clear_cache", help="Clean cache database")
 def config_clear_cache(ctx: typer.Context) -> None:
-    """Clean cache database"""
     ctx_obj = get_context_obj(ctx)
     ctx_obj.service.clear_cache()

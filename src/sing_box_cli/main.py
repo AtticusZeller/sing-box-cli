@@ -8,7 +8,7 @@ from rich import print
 
 from sing_box_cli.api import api as api_app
 from sing_box_cli.common import ClearCacheOption, UpdateConfigOption, ensure_root
-from sing_box_cli.config import config as config_app
+from sing_box_cli.config import config_app
 from sing_box_cli.config.config import get_config, run_args
 from sing_box_cli.config.serve import token_options
 from sing_box_cli.installation import install_launchers
@@ -19,34 +19,32 @@ app = typer.Typer(help="sing-box manager.")
 app.add_typer(api_app)
 app.add_typer(service_app, name="service")
 app.add_typer(config_app, name="config")
-app.command("token")(token_options)
+app.command("token", help="Create, list and revoke independent subscription tokens.")(
+    token_options
+)
 
 
 @app.callback(invoke_without_command=False)
 def callback(ctx: typer.Context) -> None:
     if ctx.invoked_subcommand in ("install", "config", "token"):
         return
-    # Reading a version must not create a store or print first-use setup messages.
-    cfg = (
-        get_config(initialize=False)
-        if ctx.invoked_subcommand == "version"
-        else get_config()
-    )
+    cfg = get_config(initialize=ctx.invoked_subcommand != "version")
     service = create_service(cfg)
     ctx.obj = SharedContext(config=cfg, service=service)
 
 
-@app.command("install")
+@app.command(
+    "install", help="Install both system CLI entry points, requesting sudo when needed."
+)
 def install(
     directory: Annotated[
         Path, typer.Option("--bin-dir", help="Existing system executable directory.")
     ] = Path("/usr/local/bin"),
 ) -> None:
-    """Install both system CLI entry points, requesting sudo when needed."""
     install_launchers(directory)
 
 
-@app.command()
+@app.command(help="Run sing-box if host's service unavailable or debug mode.")
 def run(
     ctx: typer.Context,
     update: UpdateConfigOption = False,
@@ -59,7 +57,6 @@ def run(
         ),
     ] = False,
 ) -> None:
-    """Run sing-box if host's service unavailable or debug mode."""
     cfg = get_context_obj(ctx).config
     if force_cli:
         import sys
@@ -90,27 +87,23 @@ def run(
     if purge:
         cfg.clear_cache()
 
-    # stop if empty
     if cfg.config_file_content == "{}":
         print("❌ Configuration file is empty.")
         raise typer.Exit(1)
 
-    # run
     cmd = run_args(cfg)
     subprocess.run(cmd)
 
 
-@app.command()
+@app.command(help="Show version")
 def version(ctx: typer.Context) -> None:
-    """Show version"""
     from sing_box_cli import __version__
 
     print(f"🔖 sing-box-cli {__version__}")
     print(f"📦 {get_context_obj(ctx).service.version()}")
 
 
-def _configure_console_output() -> None:
-    """Keep Windows code pages, replacing characters they cannot represent."""
+def _replace_unencodable_output_on_windows() -> None:
     if sys.platform != "win32":
         return
     for stream in (sys.stdout, sys.stderr):
@@ -119,12 +112,11 @@ def _configure_console_output() -> None:
             try:
                 reconfigure(errors="replace")
             except (OSError, ValueError):
-                # Embedded/captured or closed streams may not be reconfigurable.
                 pass
 
 
 def main() -> None:
-    _configure_console_output()
+    _replace_unencodable_output_on_windows()
     app()
 
 

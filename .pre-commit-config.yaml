@@ -35,6 +35,11 @@ repos:
         args: [--fix]
       - id: ruff-format
 
+  - repo: https://github.com/AtticusZeller/no-comments
+    rev: v0.5.1
+    hooks:
+      - id: no-comments
+
   - repo: https://github.com/astral-sh/uv-pre-commit
     # uv version.
     rev: 0.8.23

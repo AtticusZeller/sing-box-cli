@@ -1,5 +1,3 @@
-"""Private entry point spawned by config serve start."""
-
 import argparse
 import logging
 import signal

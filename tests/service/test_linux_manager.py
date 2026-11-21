@@ -1,5 +1,3 @@
-"""A service that did not come up must not be reported as started."""
-
 import importlib
 import subprocess
 from pathlib import Path
@@ -30,7 +28,6 @@ def manager(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> LinuxServiceMana
 def mock_systemctl(
     monkeypatch: pytest.MonkeyPatch, **exit_codes: int
 ) -> list[list[str]]:
-    """Replace systemctl: an action exits with the code given for it, 0 otherwise."""
     calls: list[list[str]] = []
 
     def run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
@@ -63,7 +60,6 @@ def test_refused_start_ends_the_command(
     capsys: pytest.CaptureFixture[str],
     action: str,
 ) -> None:
-    """For example the unit's start limit, hit after a few failed starts."""
     calls = mock_systemctl(monkeypatch, **{action: 1})
 
     with pytest.raises(typer.Exit) as failure:
@@ -81,8 +77,43 @@ def test_core_that_exits_right_after_starting_ends_the_command(
     capsys: pytest.CaptureFixture[str],
     action: str,
 ) -> None:
-    """systemd is done once the core is executed, a rejected configuration is not seen."""
     mock_systemctl(monkeypatch, is_active=3)
+
+    with pytest.raises(typer.Exit) as failure:
+        getattr(manager, action)()
+
+    assert failure.value.exit_code == 1
+    assert "journalctl -u sing-box" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("action", ["start", "restart"])
+def test_core_exiting_soon_after_type_exec_start_ends_the_command(
+    manager: LinuxServiceManager,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    action: str,
+) -> None:
+    core_lifetime = 0.01
+    clock = 0.0
+    core_exits_at: float | None = None
+
+    def sleep(seconds: float) -> None:
+        nonlocal clock
+        clock += seconds
+
+    def run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        nonlocal core_exits_at
+        if command[:2] == ["systemctl", action]:
+            core_exits_at = clock + core_lifetime
+            return subprocess.CompletedProcess(command, 0)
+        if command[:2] == ["systemctl", "is-active"]:
+            running = core_exits_at is not None and clock < core_exits_at
+            return subprocess.CompletedProcess(command, 0 if running else 3)
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(manager_module.time, "sleep", sleep)
+    monkeypatch.setattr(manager_module.time, "monotonic", lambda: clock)
+    monkeypatch.setattr(subprocess, "run", run)
 
     with pytest.raises(typer.Exit) as failure:
         getattr(manager, action)()
@@ -106,7 +137,7 @@ def test_commands_do_not_report_success_on_start_failure(
 ) -> None:
     main = importlib.import_module("sing_box_cli.main")
     service = importlib.import_module("sing_box_cli.service")
-    monkeypatch.setattr(main, "get_config", lambda: manager.config)
+    monkeypatch.setattr(main, "get_config", lambda **_: manager.config)
     monkeypatch.setattr(main, "create_service", lambda _config: manager)
     monkeypatch.setattr(service, "ensure_root", lambda: None)
 

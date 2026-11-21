@@ -40,14 +40,14 @@ def get_context_obj(ctx: typer.Context) -> SharedContext:
 
 
 def ensure_privileges(service: ServiceManager) -> None:
-    """Require root only for backends that manage a system service themselves."""
     if service.requires_root:
         ensure_root()
 
 
-@service.command("enable")
+@service.command(
+    "enable", help="Start the service; enable autostart for standalone installations."
+)
 def service_enable(ctx: typer.Context) -> None:
-    """Start the service; enable autostart for standalone installations."""
     ctx_obj = get_context_obj(ctx)
     config = ctx_obj.config
     service = ctx_obj.service
@@ -58,9 +58,10 @@ def service_enable(ctx: typer.Context) -> None:
         print(f"🔌 Default API: {config.api_base_url}")
 
 
-@service.command("disable")
+@service.command(
+    "disable", help="Stop the service; disable autostart for standalone installations."
+)
 def service_disable(ctx: typer.Context) -> None:
-    """Stop the service; disable autostart for standalone installations."""
     ctx_obj = get_context_obj(ctx)
     service = ctx_obj.service
     ensure_privileges(service)
@@ -68,7 +69,10 @@ def service_disable(ctx: typer.Context) -> None:
     print(f"✋ {result}")
 
 
-@service.command("restart")
+@service.command(
+    "restart",
+    help="Restart sing-box service, update configuration if needed, create service if not exists",
+)
 def service_restart(
     ctx: typer.Context,
     update: UpdateConfigOption = False,
@@ -76,7 +80,6 @@ def service_restart(
     purge_data: PurgeDataOption = False,
     yes: YesOption = False,
 ) -> None:
-    """Restart sing-box service, update configuration if needed, create service if not exists"""
     ctx_obj = get_context_obj(ctx)
     config = ctx_obj.config
     service = ctx_obj.service
@@ -86,14 +89,12 @@ def service_restart(
             print("❌ --purge-data is only for the sing-box desktop app.")
             raise typer.Exit(1)
         if not yes:
-            # Without a terminal the prompt reads EOF and aborts.
             typer.confirm(
                 f"Delete the desktop daemon's working directory? "
                 f"This loses {_PURGE_DATA_LOSS}",
                 abort=True,
             )
     elif clear_cache:
-        # Removing the cache needs root on every backend; check before stopping.
         ensure_root()
     if service.check_service():
         service.sync_service()
@@ -105,12 +106,12 @@ def service_restart(
         else:
             print("❌ Failed to update configuration.")
             raise typer.Exit(1)
-    if service.hot_reload and not (clear_cache or purge_data):
+    if service.restarts_in_place and not (clear_cache or purge_data):
         service.restart()
     else:
         service.stop()
         if purge_data:
-            service.purge_data()  # the cache goes with it
+            service.purge_data()
         elif clear_cache:
             service.clear_cache()
         service.start()
@@ -119,9 +120,8 @@ def service_restart(
         print(f"🔌 Default API: {config.api_base_url}")
 
 
-@service.command("stop")
+@service.command("stop", help="Stop sing-box service")
 def service_stop(ctx: typer.Context) -> None:
-    """Stop sing-box service"""
     ctx_obj = get_context_obj(ctx)
     service = ctx_obj.service
     ensure_privileges(service)
@@ -129,9 +129,8 @@ def service_stop(ctx: typer.Context) -> None:
     print("✋ Service stopped.")
 
 
-@service.command("status")
+@service.command("status", help="Check service status")
 def service_status(ctx: typer.Context) -> None:
-    """Check service status"""
     ctx_obj = get_context_obj(ctx)
     service = ctx_obj.service
     ensure_privileges(service)

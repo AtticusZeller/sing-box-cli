@@ -1,17 +1,3 @@
-"""The profile store: ``settings.db`` and ``profiles/`` of the sing-box desktop app.
-
-Every machine uses this one model. The selected profile is the configuration and
-its subscription URL is the subscription, whether the desktop app is installed or
-not. Without the app sbc creates the very same database (same schema, the app
-creates its tables with ``IF NOT EXISTS`` and has no other migration), so the app
-takes it over untouched if it is installed later. With the app installed the
-database belongs to it: it is never created or repaired from here, only read and,
-for a subscription refresh, updated.
-
-    <config dir>/settings.db           profiles, preferences (selected profile, ...)
-    <config dir>/profiles/<id>.json    the profile's sing-box configuration
-"""
-
 import json
 import os
 import sqlite3
@@ -22,7 +8,7 @@ from collections.abc import Iterator
 from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from .utils import with_token
 
@@ -51,14 +37,12 @@ CREATE TABLE IF NOT EXISTS remote_servers (
 """
 
 
-class SettingsError(Exception):
-    """The profile store cannot be used; the message tells the user why."""
+class SettingsError(Exception): ...
 
 
 @dataclass(frozen=True)
 class Profile:
     path: Path
-    # Subscription URL the profile is refreshed from, None for a local profile.
     remote_url: str | None
 
     @property
@@ -68,12 +52,6 @@ class Profile:
 
 @contextmanager
 def invoking_user() -> Iterator[None]:
-    """Under ``sudo``, act as the user who ran it, otherwise do nothing.
-
-    The desktop daemon identifies callers by uid, and files created in the user's
-    config directory (SQLite's -wal and -shm, profiles) must not end up owned by
-    root.
-    """
     if sys.platform == "win32":
         yield
         return
@@ -94,21 +72,19 @@ def settings_path(config_dir: Path) -> Path:
     return config_dir / "settings.db"
 
 
-def _settings_uri(path: Path, mode: str) -> str:
-    """An SQLite URI that never creates the file, valid for Windows drive paths too."""
+def _existing_db_uri(path: Path, mode: Literal["ro", "rw"]) -> str:
     return f"{path.absolute().as_uri()}?mode={mode}"
 
 
 def settings_query(
     config_dir: Path, sql: str, params: tuple[str, ...] = ()
 ) -> list[tuple[Any, ...]]:
-    """Rows from the settings database, opened read-only."""
     path = settings_path(config_dir)
     if not path.is_file():
         raise SettingsError(
             f"The sing-box app's settings ({path}) do not exist, open the app once."
         )
-    uri = _settings_uri(path, "ro")
+    uri = _existing_db_uri(path, "ro")
     try:
         with invoking_user(), closing(sqlite3.connect(uri, uri=True, timeout=2)) as db:
             rows: list[tuple[Any, ...]] = db.execute(sql, params).fetchall()
@@ -143,7 +119,6 @@ def _decode_id(data: Any) -> str | None:
 
 
 def active_profile(config_dir: Path) -> Profile:
-    """The selected profile of an existing store. Raises if there is none."""
     rows = settings_query(
         config_dir, "SELECT data FROM preferences WHERE name = 'selected_profile_id'"
     )
@@ -158,26 +133,19 @@ def update_profile_record(
     profile_id: str,
     *,
     remote_url: str | None = None,
-    make_remote: bool = False,
+    owned_store: bool = False,
 ) -> None:
-    """Record a refresh of a profile and, if given, its new subscription URL.
-
-    ``last_updated`` is set as the app does after a refresh, ``remote_url`` when
-    the subscription was changed from the command line, so everyone shares one
-    subscription. ``make_remote`` turns a local profile into a remote one, which is
-    only for a store sbc owns. A single UPDATE, SQLite serialises it with the app.
-    """
     path = settings_path(config_dir)
     assignments = ["last_updated = ?"]
     params: list[int | str] = [int(time.time() * 1000)]
     if remote_url is not None:
         assignments.append("remote_url = ?")
         params.append(remote_url)
-        if make_remote:
+        if owned_store:
             assignments.append("type = 'remote'")
-    where = "id = ?" if make_remote else "id = ? AND type = 'remote'"
+    where = "id = ?" if owned_store else "id = ? AND type = 'remote'"
     params.append(profile_id)
-    uri = _settings_uri(path, "rw")
+    uri = _existing_db_uri(path, "rw")
     try:
         with (
             invoking_user(),
@@ -194,7 +162,6 @@ def update_profile_record(
 
 
 def _legacy_subscription(config_dir: Path) -> str:
-    """The subscription older versions kept in app_config.json, token folded in."""
     legacy_app = config_dir / "app_config.json"
     if not legacy_app.is_file():
         return ""
@@ -208,10 +175,6 @@ def _legacy_subscription(config_dir: Path) -> str:
 
 
 def legacy_profile(config_dir: Path) -> Profile:
-    """What older versions kept, as a read-only view before the store exists.
-
-    Used by commands that must not create anything (``config get``, dry runs).
-    """
     return Profile(
         path=config_dir / "config.json",
         remote_url=_legacy_subscription(config_dir) or None,
@@ -219,20 +182,12 @@ def legacy_profile(config_dir: Path) -> Profile:
 
 
 def init_store(config_dir: Path) -> Profile:
-    """Open the store sbc owns (no desktop app), creating what is missing.
-
-    A first run imports what older versions kept: ``config.json`` becomes the
-    profile and the subscription (with its separate token folded into the URL)
-    comes from ``app_config.json``. ``config.json`` stays as a link to the profile,
-    so a service created before keeps running the same file.
-    """
     path = settings_path(config_dir)
     imported = False
     try:
         with invoking_user():
             (config_dir / "profiles").mkdir(parents=True, exist_ok=True)
             if not path.exists():
-                # private like the app's own: the subscription URL carries a token
                 path.touch(mode=0o600)
             with closing(sqlite3.connect(path, timeout=5)) as db, db:
                 db.executescript(_SCHEMA)
@@ -242,7 +197,6 @@ def init_store(config_dir: Path) -> Profile:
                     imported = True
             profile = _profile_of(config_dir, profile_id)
             if imported:
-                # only once the store is committed: nothing is lost if this fails
                 _retire_legacy_files(config_dir, profile.path)
     except (sqlite3.Error, OSError) as e:
         raise SettingsError(f"Cannot use the settings ({path}): {e}") from e
@@ -250,7 +204,6 @@ def init_store(config_dir: Path) -> Profile:
 
 
 def _usable_selection(db: sqlite3.Connection, config_dir: Path) -> str | None:
-    """The selected profile if it is whole, else the first whole one (selected)."""
 
     def whole(profile_id: str) -> bool:
         known = db.execute("SELECT 1 FROM profiles WHERE id = ?", (profile_id,))
@@ -280,10 +233,9 @@ def _select(db: sqlite3.Connection, profile_id: str) -> None:
 
 
 def _import(db: sqlite3.Connection, config_dir: Path) -> str:
-    """Create the first profile from what older versions left, or an empty one."""
     legacy_config = config_dir / "config.json"
     content = "{}"
-    if legacy_config.is_file():  # also a link the user made to a file elsewhere
+    if legacy_config.is_file():
         content = legacy_config.read_text(encoding="utf-8")
     url = _legacy_subscription(config_dir)
 
@@ -305,7 +257,6 @@ def _import(db: sqlite3.Connection, config_dir: Path) -> str:
 
 
 def _retire_legacy_files(config_dir: Path, profile: Path) -> None:
-    """Keep the old paths pointing at the profile instead of at a second copy."""
     legacy_app = config_dir / "app_config.json"
     if legacy_app.is_file():
         os.replace(legacy_app, legacy_app.with_name("app_config.json.migrated"))
@@ -318,8 +269,6 @@ def _retire_legacy_files(config_dir: Path, profile: Path) -> None:
     try:
         legacy_config.symlink_to(profile)
     except OSError:
-        # no privilege to link (Windows): the file stays, and the service is
-        # pointed at the profile on its next restart (see sync_service)
         os.replace(backup, legacy_config)
 
 

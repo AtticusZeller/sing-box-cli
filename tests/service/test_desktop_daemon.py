@@ -1,5 +1,3 @@
-"""The desktop backend against a fake daemon speaking the real wire format."""
-
 import json
 import shutil
 import sys
@@ -35,8 +33,6 @@ IDLE, STARTED = 0, 2
 
 
 class FakeDaemon(grpc.GenericRpcHandler):  # type: ignore[misc]
-    """Just enough of the daemon: ownership, service status, start, stop, destroy."""
-
     def __init__(self, ownership: int = OWNER_CALLER) -> None:
         self.ownership = ownership
         self.status = STARTED
@@ -45,7 +41,7 @@ class FakeDaemon(grpc.GenericRpcHandler):  # type: ignore[misc]
         self.rpc_failure: Any = None
         self.failure_method: str | None = None
         self.hang_method: str | None = None
-        self.stop_status = IDLE
+        self.status_after_stop = IDLE
         self.status_reads = 0
         self.working_directory = ""
 
@@ -82,13 +78,14 @@ class FakeDaemon(grpc.GenericRpcHandler):  # type: ignore[misc]
             self.start_requests.append(request)
             self.status = STARTED
         elif method == "StopService":
-            self.status = self.stop_status
+            self.status = self.status_after_stop
         return b""
 
 
 @pytest.fixture
 def daemon(monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeDaemon]:
-    directory = tempfile.mkdtemp(prefix="sbc-")  # unix socket paths are short
+    # KEEP: AF_UNIX paths are limited to 108 bytes and tmp_path can exceed it (https://man7.org/linux/man-pages/man7/unix.7.html)
+    directory = tempfile.mkdtemp(prefix="sbc-")
     path = Path(directory) / "d.sock"
     fake = FakeDaemon()
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
@@ -103,7 +100,6 @@ def daemon(monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeDaemon]:
 
 @pytest.fixture
 def app_dir(tmp_path: Path, make_settings_db: Callable[..., Path]) -> Path:
-    """The app's data directory with profile ``p`` selected."""
     directory = tmp_path / "sing-box"
     (directory / "profiles").mkdir(parents=True)
     (directory / "profiles" / "p.json").write_text('{"log":{}}')
@@ -122,7 +118,6 @@ def _manager(app_dir: Path, cache: str = "cache.db") -> DesktopDaemonServiceMana
 def work_dir(
     daemon: FakeDaemon, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> Path:
-    """The daemon's working directory with a cache and Tailscale state; runs "as root"."""
     directory = tmp_path / "users" / "abc"
     (directory / "tailscale").mkdir(parents=True)
     (directory / "tailscale" / "tailscaled.state").write_text("node key")
@@ -210,7 +205,8 @@ def test_missing_settings_stop_the_start_instead_of_guessing(
 ) -> None:
     empty = tmp_path / "no-app-data"
     (empty / "profiles").mkdir(parents=True)
-    (empty / "profiles" / "p.json").write_text("{}")  # a guess would use it
+    guessable_profile = empty / "profiles" / "p.json"
+    guessable_profile.write_text("{}")
 
     with pytest.raises(SettingsError):
         read_start_options(empty)
@@ -245,12 +241,15 @@ def test_clear_cache_removes_only_the_cache_file(
     assert not (work_dir / "cache.db").exists()
     assert (work_dir / "tailscale" / "tailscaled.state").read_text() == "node key"
 
-    daemon.calls.clear()
+
+def test_clear_cache_leaves_a_stopped_daemon_stopped(
+    daemon: FakeDaemon, app_dir: Path, work_dir: Path
+) -> None:
     daemon.status = IDLE
     (work_dir / "sub").mkdir()
     (work_dir / "sub" / "c.db").write_bytes(b"bolt")
     _manager(app_dir, "sub/c.db").clear_cache()
-    assert daemon.calls == []  # was not running: stay stopped
+    assert daemon.calls == []
     assert not (work_dir / "sub" / "c.db").exists()
 
 
@@ -266,7 +265,7 @@ def test_clear_cache_refuses_a_path_outside_the_working_directory(
         _manager(app_dir, cache).clear_cache()
 
     assert "outside the daemon's working directory" in capsys.readouterr().out
-    assert daemon.calls == []  # not even stopped
+    assert daemon.calls == []
     assert (work_dir / "cache.db").exists()
 
 
@@ -276,7 +275,7 @@ def test_restart_command_reloads_in_place(daemon: FakeDaemon, app_dir: Path) -> 
     result = CliRunner().invoke(service_app, ["restart"], obj=obj)
 
     assert result.exit_code == 0, result.output
-    assert daemon.calls == ["StartService"]  # no stop in between
+    assert daemon.calls == ["StartService"]
 
 
 def test_restart_with_clear_cache_goes_through_a_stop(
@@ -304,7 +303,6 @@ def test_restart_with_purge_data_destroys_the_working_directory(
 
 
 def test_json_of_profile_is_untouched(daemon: FakeDaemon, app_dir: Path) -> None:
-    """What reaches the daemon is the profile file, byte for byte."""
     text = json.dumps({"outbounds": [], "x": "é"}, ensure_ascii=False)
     (app_dir / "profiles" / "p.json").write_text(text, encoding="utf-8")
 
@@ -315,7 +313,6 @@ def test_json_of_profile_is_untouched(daemon: FakeDaemon, app_dir: Path) -> None
 
 @pytest.fixture
 def lifecycle(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
-    """Systemd is recorded, never connected to the host's manager."""
     from sing_box_cli.service import debug
 
     originals = (debug._systemctl, debug._unit_state, debug._stop_units)
@@ -483,6 +480,20 @@ def test_enable_validates_profile_before_starting_daemon(
     assert daemon.calls == []
 
 
+def _use_real_systemctl_wrappers(
+    monkeypatch: pytest.MonkeyPatch, lifecycle: SimpleNamespace, error: Exception
+) -> None:
+    from unittest.mock import MagicMock
+
+    from sing_box_cli.service import debug
+
+    for name, original in zip(
+        ("_systemctl", "_unit_state", "_stop_units"), lifecycle.originals, strict=True
+    ):
+        monkeypatch.setattr(debug, name, original)
+    monkeypatch.setattr(debug.subprocess, "run", MagicMock(side_effect=error))
+
+
 @pytest.mark.parametrize("command", ["enable", "disable"])
 @pytest.mark.parametrize("failure", ["timeout", "denied", "missing"])
 def test_system_layer_failures_are_nonzero_and_preserve_reason(
@@ -502,22 +513,13 @@ def test_system_layer_failures_are_nonzero_and_preserve_reason(
         if command == "disable":
             monkeypatch.setattr(debug, "_stop_units", lifecycle.originals[2])
     else:
-        # Exercise the real bounded wrapper, including stderr from systemctl.
         if failure == "timeout":
             error: Exception = subprocess.TimeoutExpired("systemctl", 3)
         else:
             error = subprocess.CalledProcessError(
                 1, "systemctl", stderr="Access denied"
             )
-        from unittest.mock import MagicMock
-
-        for name, original in zip(
-            ("_systemctl", "_unit_state", "_stop_units"),
-            lifecycle.originals,
-            strict=True,
-        ):
-            monkeypatch.setattr(debug, name, original)
-        monkeypatch.setattr(debug.subprocess, "run", MagicMock(side_effect=error))
+        _use_real_systemctl_wrappers(monkeypatch, lifecycle, error)
     result = _invoke_lifecycle(app_dir, command)
     assert result.exit_code == 1, result.output
     expected = {"missing": "not", "denied": "Access denied", "timeout": "3 seconds"}[
@@ -613,7 +615,7 @@ def test_disable_falls_back_after_bounded_core_stop_or_verification(
 ) -> None:
     monkeypatch.setattr(desktop, "_LIFECYCLE_TIMEOUT", 0.04)
     if hung == "status":
-        daemon.stop_status = STARTED  # StopService acknowledged but not stopped
+        daemon.status_after_stop = STARTED
     else:
         daemon.hang_method = hung
     before = time.monotonic()
@@ -738,16 +740,16 @@ def test_enable_waits_for_rpc_to_appear_then_starts_selected_profile(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     original = desktop.desktop_daemon_available
-    checks = 0
+    outcomes: list[bool] = []
 
     def available() -> bool:
-        nonlocal checks
-        checks += 1
-        return checks > 1 and original()
+        result = bool(outcomes) and original()
+        outcomes.append(result)
+        return result
 
     monkeypatch.setattr(desktop, "desktop_daemon_available", available)
     result = _invoke_lifecycle(app_dir, "enable")
     assert result.exit_code == 0, result.output
-    assert checks >= 3  # not ready, ready, then StartService
+    assert outcomes[:3] == [False, True, True]
     assert daemon.calls == ["StartService"]
     assert decode_fields(daemon.start_requests[0])[1] == b'{"log":{}}'

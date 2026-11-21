@@ -1,5 +1,3 @@
-"""Named, file-scoped subscription credentials; GitHub credentials stay separate."""
-
 import hashlib
 import json
 import re
@@ -45,7 +43,6 @@ def load_tokens(directory: Path) -> list[SubscriptionToken]:
 
 
 def create_token(directory: Path, name: str, domain: str, filename: str) -> str:
-    """Return a new secret once and persist only its SHA-256 digest."""
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", name):
         raise ServeError(
             "Use a token name with 1-64 letters, digits, dots, _ or -.", 400
@@ -85,7 +82,6 @@ def revoke_token(directory: Path, name: str) -> None:
 def revoke_subscription_tokens(
     directory: Path, target: str, domain: str | None = None
 ) -> int:
-    """Revoke an exact secret, or every token for a configuration filename."""
     entries = load_tokens(directory)
     if domain is not None:
         domain = normalize_domain(domain)
@@ -119,7 +115,6 @@ def revoke_subscription_tokens(
 def authorize_subscription(
     directory: Path, domain: str, filename: str, authorization: list[str], query: str
 ) -> None:
-    """Reject absent, conflicting, revoked or out-of-scope credentials."""
     denied = ServeError("A valid subscription token is required.", 401)
     try:
         query_tokens = parse_qs(query, keep_blank_values=True, max_num_fields=32).get(

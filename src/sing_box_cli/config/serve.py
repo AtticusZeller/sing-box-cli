@@ -1,5 +1,3 @@
-"""CLI registration and detached process lifecycle for config delivery."""
-
 import contextlib
 import subprocess
 import sys
@@ -204,12 +202,13 @@ def command_errors() -> Iterator[None]:
         raise typer.Exit(1)
 
 
-@serve.command("add")
+@serve.command(
+    "add", help="Register a repository after verifying server-side GitHub access."
+)
 def add(
     github_url: Annotated[str, typer.Argument(help="https://github.com/OWNER/REPO")],
     domain: Annotated[str, typer.Option("--domain", help="Public Traefik domain.")],
 ) -> None:
-    """Register a repository after verifying server-side GitHub access."""
     with command_errors():
         source = Source(normalize_repository(github_url), normalize_domain(domain))
         github = GitHub(github_token())
@@ -223,9 +222,10 @@ def add(
         print(f"Registered {source.repository} → https://{source.domain}")
 
 
-@serve.command("list")
+@serve.command(
+    "list", help="Print valid configuration URLs from registered repositories."
+)
 def list_configs() -> None:
-    """Print valid configuration URLs from registered repositories."""
     with command_errors():
         sources = load_sources(state_directory())
         if not sources:
@@ -253,7 +253,9 @@ def list_configs() -> None:
             print("No valid configurations found.")
 
 
-@serve.command("start")
+@serve.command(
+    "start", help="Start the HTTP service in the background and wait until listening."
+)
 def start(
     host: Annotated[
         str, typer.Option(help="Bind address; use 0.0.0.0 for a container network.")
@@ -262,7 +264,6 @@ def start(
         int, typer.Option(min=1, max=65535, help="HTTP listening port.")
     ] = 8080,
 ) -> None:
-    """Start the HTTP service in the background and wait until listening."""
     with command_errors():
         directory = state_directory()
         state, started = start_server(directory, host, port)
@@ -302,7 +303,6 @@ def token_options(
         str | None, typer.Option("--name", "-n", help="Optional name for a new token.")
     ] = None,
 ) -> None:
-    """Create, list and revoke independent subscription tokens."""
     actions = int(list_) + int(create is not None) + int(revoke is not None)
     if actions == 0 and domain is None and name is None:
         print(ctx.get_help())
@@ -337,7 +337,6 @@ def token_options(
 
 
 def token_create(name: str, domain: str, filename: str) -> None:
-    """Generate a file-scoped token and print its secret and URL once."""
     with command_errors():
         domain = normalize_domain(domain)
         directory = state_directory()
@@ -357,7 +356,6 @@ def token_create(name: str, domain: str, filename: str) -> None:
 
 
 def token_list() -> None:
-    """List token names and scopes without displaying their secrets."""
     with command_errors():
         entries = load_tokens(state_directory())
         if not entries:
@@ -366,9 +364,8 @@ def token_list() -> None:
             print(f"{item.name}\t{item.domain}\t{item.filename}\t{item.created_at}")
 
 
-@serve.command("stop")
+@serve.command("stop", help="Stop this user's background configuration service.")
 def stop() -> None:
-    """Stop this user's background configuration service."""
     with command_errors():
         stopped = stop_server(state_directory())
         print(

@@ -1,5 +1,3 @@
-"""Which service backend is used, and how an existing service follows the profile."""
-
 import subprocess
 import sys
 from pathlib import Path
@@ -25,14 +23,13 @@ def _config(**kwargs: Any) -> Any:
 def test_without_desktop_app_uses_systemd_backend(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """No desktop app: the service backend of before, and grpc is never loaded."""
     monkeypatch.delitem(sys.modules, "grpc", raising=False)
 
     service = create_service(_config())
 
     assert type(service) is LinuxServiceManager
     assert service.requires_root
-    assert not service.hot_reload
+    assert not service.restarts_in_place
     assert "grpc" not in sys.modules
 
 
@@ -47,7 +44,7 @@ def test_windows_keeps_its_own_backend() -> None:
 
     assert type(service) is WindowsServiceManager
     assert service.requires_root
-    assert not service.hot_reload
+    assert not service.restarts_in_place
 
 
 def test_windows_desktop_never_selects_the_standalone_service() -> None:
@@ -60,7 +57,6 @@ def test_windows_desktop_never_selects_the_standalone_service() -> None:
 def test_existing_unit_follows_the_profile_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A unit made before points at config.json, the configuration is a profile now."""
     calls: list[list[str]] = []
     monkeypatch.setattr(subprocess, "run", lambda cmd, *a, **k: calls.append(cmd))
     profile = tmp_path / "profiles" / "abc.json"
@@ -71,7 +67,7 @@ def test_existing_unit_follows_the_profile_path(
     service.service_file = tmp_path / "sing-box.service"
 
     assert service.check_service() is False
-    service.sync_service()  # nothing installed: nothing to do
+    service.sync_service()
     assert not service.service_file.exists()
 
     service.service_file.write_text(
@@ -83,5 +79,5 @@ def test_existing_unit_follows_the_profile_path(
     assert calls == [["systemctl", "daemon-reload"]]
 
     calls.clear()
-    service.sync_service()  # already current: left alone
+    service.sync_service()
     assert calls == []

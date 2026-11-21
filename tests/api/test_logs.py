@@ -77,7 +77,7 @@ def test_logs_reports_dropped_stream_once(
     fake_singbox: FakeSingBox, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(api, "get_context_obj", lambda _ctx: MagicMock())
-    fake_singbox.log_limit = 3  # then the connection drops mid-stream
+    fake_singbox.logs_before_drop = 3
     args = ["logs", "--base-url", fake_singbox.base_url, "--token", "x"]
     result = CliRunner().invoke(api.api, args)
     assert result.exit_code == 1, result.output

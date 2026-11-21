@@ -1,4 +1,4 @@
-"""Exercise real encoded streams: CliRunner normally hides encoding failures."""
+"""KEEP: CliRunner writes utf-8 and uses backslashreplace on stderr, which hides cp1252 encoding errors, so these tests use real encoded streams (click 8.5.0 click/testing.py, #46)."""
 
 import importlib
 import io
@@ -25,7 +25,6 @@ def test_command_startup(
     desktop: bool,
     command: list[str],
 ) -> None:
-    # Keep real ConfigHandler construction, but isolate all filesystem/service state.
     monkeypatch.setattr(ConfigHandler, "is_windows", property(lambda self: True))
     monkeypatch.setattr("typer.get_app_dir", lambda *a, **kw: str(tmp_path))
     monkeypatch.setattr(ConfigHandler, "_detect_desktop_app", lambda self: desktop)
@@ -40,7 +39,6 @@ def test_command_startup(
     with monkeypatch.context() as patch:
         patch.setattr(sys, "stdout", stdout)
         patch.setattr(sys, "stderr", stderr)
-        # Simulate the entry point's OS decision without changing pathlib/Rich's OS.
         patch.setattr(
             main,
             "sys",
@@ -79,7 +77,7 @@ def test_output_encoding_policy(monkeypatch: pytest.MonkeyPatch, platform: str) 
         "sys",
         SimpleNamespace(platform=platform, stdout=streams[0], stderr=streams[1]),
     )
-    main._configure_console_output()
+    main._replace_unencodable_output_on_windows()
     assert [stream.encoding for stream in streams] == ["cp1252", "utf-8"]
     for stream in streams:
         assert stream.errors == ("replace" if platform == "win32" else "strict")
@@ -99,12 +97,12 @@ def test_stream_without_reconfigure(
     monkeypatch.setattr(
         main, "sys", SimpleNamespace(platform="win32", stdout=stream, stderr=stderr)
     )
-    main._configure_console_output()
+    main._replace_unencodable_output_on_windows()
     stderr.reconfigure.assert_called_once_with(errors="replace")
 
 
 @pytest.mark.parametrize("error", [OSError, ValueError, io.UnsupportedOperation])
-def test_unavailable_stream_does_not_block_stderr(
+def test_unreconfigurable_stream_does_not_block_stderr(
     monkeypatch: pytest.MonkeyPatch, error: type[Exception]
 ) -> None:
     stdout, stderr = Mock(), Mock()
@@ -112,5 +110,5 @@ def test_unavailable_stream_does_not_block_stderr(
     monkeypatch.setattr(
         main, "sys", SimpleNamespace(platform="win32", stdout=stdout, stderr=stderr)
     )
-    main._configure_console_output()
+    main._replace_unencodable_output_on_windows()
     stderr.reconfigure.assert_called_once_with(errors="replace")

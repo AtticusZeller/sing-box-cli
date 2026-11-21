@@ -45,7 +45,6 @@ def load_json_asdict(config_file: Path) -> dict[str, Any]:
 
 
 def redact_url(url: str) -> str:
-    """A URL safe to print: without user info and without the value of a token."""
     try:
         parts = urlsplit(url)
     except ValueError:
@@ -58,7 +57,6 @@ def redact_url(url: str) -> str:
 
 
 def with_token(url: str, token: str) -> str:
-    """Put a subscription token into the URL, where the desktop app keeps it."""
     parts = urlsplit(url)
     if "token" in dict(parse_qsl(parts.query)):
         return url
@@ -68,11 +66,6 @@ def with_token(url: str, token: str) -> str:
 
 
 def atomic_write_text(path: Path, content: str) -> None:
-    """Replace ``path`` in one step, keeping its mode and owner.
-
-    The file may belong to another application that reads it at any time, and
-    root must not turn a user's file into a root-owned one.
-    """
     tmp = path.with_name(f".{path.name}.sbc-tmp")
     st = path.stat() if path.exists() else None
     tmp.write_text(content, encoding="utf-8", newline="")
@@ -88,7 +81,6 @@ def atomic_write_text(path: Path, content: str) -> None:
 def subscription_credentials(
     url: str, token: str | None = None
 ) -> tuple[str, str | None]:
-    """Move a URL's subscription token out of the URL before logging or saving it."""
     parsed = urlsplit(url)
     pairs = parse_qsl(parsed.query, keep_blank_values=True, max_num_fields=32)
     query_tokens = [value for key, value in pairs if key == "token"]
@@ -109,7 +101,6 @@ def subscription_credentials(
 
 
 def request_get(url: str, token: str) -> httpx.Response | None:
-    # Strip credentials before any error can include the request URL.
     safe_url = "subscription URL"
     try:
         url, resolved_token = subscription_credentials(url, token or None)
@@ -120,8 +111,6 @@ def request_get(url: str, token: str) -> httpx.Response | None:
         try:
             response = httpx.get(url, headers=headers)
         except (httpx.ConnectError, httpx.ConnectTimeout):
-            # A custom transport disables HTTPX's environment proxy detection.
-            # Never bypass a configured proxy when retrying a failed connection.
             proxies = getproxies()
             if any(proxies.get(scheme) for scheme in ("http", "https", "all")):
                 raise

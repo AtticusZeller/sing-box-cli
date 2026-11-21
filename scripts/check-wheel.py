@@ -1,5 +1,3 @@
-"""Check the distributed wheel rather than assuming build resources were included."""
-
 from pathlib import Path
 from zipfile import ZipFile
 

@@ -5,6 +5,7 @@ import subprocess
 import sys
 import venv
 from pathlib import Path
+from typing import NamedTuple
 from unittest.mock import MagicMock
 
 import pytest
@@ -83,18 +84,20 @@ def test_install_checks_both_destinations_before_writing(
     run.assert_not_called()
 
 
-@pytest.mark.skipif(sys.platform != "linux", reason="Uses a POSIX launcher")
-def test_launcher_disables_bytecode_before_imports_and_forwards_arguments(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # A symlinked venv interpreter must retain its path, including shell quotes.
+class VenvLauncher(NamedTuple):
+    path: Path
+    python: Path
+    site_packages: Path
+
+
+@pytest.fixture
+def venv_launcher(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> VenvLauncher:
     environment = tmp_path / "tool env's directory"
     venv.EnvBuilder(with_pip=False, symlinks=True).create(environment)
     python = environment / "bin" / "python"
     monkeypatch.setattr(installation.sys, "executable", str(python))
     site_packages = next((environment / "lib").glob("python*/site-packages"))
-    module = site_packages / "sing_box_cli.py"
-    module.write_text(
+    (site_packages / "sing_box_cli.py").write_text(
         "import sys\n"
         "def main():\n"
         "    assert sys.dont_write_bytecode\n"
@@ -103,21 +106,47 @@ def test_launcher_disables_bytecode_before_imports_and_forwards_arguments(
     launcher = tmp_path / "sbc"
     launcher.write_text(installation.launcher_content())
     launcher.chmod(0o755)
-    # A same-named module in the working directory must not shadow the tool.
-    (tmp_path / "sing_box_cli.py").write_text("raise RuntimeError('shadowed CLI')\n")
-    env = {**os.environ, "PYTHONPATH": str(tmp_path)}
+    return VenvLauncher(launcher, python, site_packages)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Uses a POSIX launcher")
+def test_launcher_disables_bytecode_before_imports_and_forwards_arguments(
+    venv_launcher: VenvLauncher,
+) -> None:
     arguments = ["path with spaces", "quote's", "$(echo no)", "--option"]
     result = subprocess.run(
-        [str(launcher), *arguments],
-        env=env,
-        cwd=tmp_path,
+        [str(venv_launcher.path), *arguments],
         capture_output=True,
         text=True,
         check=True,
     )
     assert result.stdout.strip() == repr(arguments)
-    assert not (site_packages / "__pycache__").exists()
-    assert f"exec {shlex.quote(str(python))} -I -B" in launcher.read_text()
+    assert not (venv_launcher.site_packages / "__pycache__").exists()
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Uses a POSIX launcher")
+def test_launcher_keeps_symlinked_venv_interpreter_path(
+    venv_launcher: VenvLauncher,
+) -> None:
+    assert venv_launcher.python.is_symlink()
+    quoted_python = shlex.quote(str(venv_launcher.python))
+    assert f"exec {quoted_python} -I -B" in venv_launcher.path.read_text()
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Uses a POSIX launcher")
+def test_launcher_ignores_cwd_and_pythonpath_modules(
+    venv_launcher: VenvLauncher, tmp_path: Path
+) -> None:
+    (tmp_path / "sing_box_cli.py").write_text("raise RuntimeError('shadowed CLI')\n")
+    result = subprocess.run(
+        [str(venv_launcher.path), "--option"],
+        env={**os.environ, "PYTHONPATH": str(tmp_path)},
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert result.stdout.strip() == repr(["--option"])
 
 
 @pytest.mark.usefixtures("linux")

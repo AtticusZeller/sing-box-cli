@@ -1,5 +1,3 @@
-"""The sing-box desktop app backend: detection, start options and the wire format."""
-
 import socket
 import sys
 from collections.abc import Callable
@@ -26,15 +24,9 @@ linux_only = pytest.mark.skipif(
 
 
 @linux_only
-def test_desktop_app_is_detected_by_its_socket_or_its_unit(
+def test_desktop_app_is_detected_by_its_socket(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    assert not desktop.desktop_app_installed()
-
-    # a regular file where the socket would be is not a daemon
-    fake = tmp_path / "sing-box.socket"
-    fake.write_text("")
-    monkeypatch.setattr(desktop, "DAEMON_SOCKET", fake)
     assert not desktop.desktop_app_installed()
 
     sock_path = tmp_path / "d.sock"
@@ -43,7 +35,21 @@ def test_desktop_app_is_detected_by_its_socket_or_its_unit(
         monkeypatch.setattr(desktop, "DAEMON_SOCKET", sock_path)
         assert desktop.desktop_app_installed()
 
-    # installed but stopped: the unit is there, the socket is not
+
+@linux_only
+def test_regular_file_at_the_socket_path_is_not_a_daemon(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = tmp_path / "sing-box.socket"
+    fake.write_text("")
+    monkeypatch.setattr(desktop, "DAEMON_SOCKET", fake)
+    assert not desktop.desktop_app_installed()
+
+
+@linux_only
+def test_installed_but_stopped_app_is_detected_by_its_unit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(desktop, "DAEMON_SOCKET", tmp_path / "gone.socket")
     unit = tmp_path / "sing-box-daemon.service"
     unit.write_text("")
@@ -57,12 +63,11 @@ def test_backend_needs_no_root_and_reloads_in_place() -> None:
     service = DesktopDaemonServiceManager(config)
 
     assert not service.requires_root
-    assert service.hot_reload
+    assert service.restarts_in_place
     assert service.check_service()
 
 
 def test_stopped_daemon_is_reported(capsys: pytest.CaptureFixture[str]) -> None:
-    """App installed, daemon down: say so instead of failing somewhere deeper."""
     config: Any = SimpleNamespace()
     service = DesktopDaemonServiceManager(config)
 
@@ -115,14 +120,19 @@ def test_start_options_are_not_guessed_without_the_settings(tmp_path: Path) -> N
 
 
 def test_protobuf_wire_roundtrip() -> None:
-    # ServiceStatus{status=STARTED(2), errorMessage="x"}
-    assert decode_fields(b"\x08\x02\x12\x01x") == {1: 2, 2: b"x"}
-    # DaemonInfo{version="1.14.3", ownership=CALLER(2)}
-    info = decode_fields(b"\x0a\x061.14.3\x10\x02")
+    service_status_started_with_error = b"\x08\x02\x12\x01x"
+    assert decode_fields(service_status_started_with_error) == {1: 2, 2: b"x"}
+    daemon_info_owned_by_caller = b"\x0a\x061.14.3\x10\x02"
+    info = decode_fields(daemon_info_owned_by_caller)
     assert info == {1: b"1.14.3", 2: 2}
-    # fixed-width fields are skipped, anything else is refused
+
+
+def test_decode_skips_fixed_width_fields() -> None:
     assert decode_fields(b"\x09" + bytes(8) + b"\x15" + bytes(4) + b"\x08\x01") == {
         1: 1
     }
+
+
+def test_decode_refuses_other_wire_types() -> None:
     with pytest.raises(ValueError):
         decode_fields(b"\x0b")

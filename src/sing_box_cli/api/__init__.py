@@ -47,7 +47,6 @@ api = typer.Typer(help="sing-box manager.")
 def create_client(
     config: ConfigHandler, base_url: StrOrNone = None, token: StrOrNone = None
 ) -> SingBoxAPIClient:
-    # read from config if not provided
     if base_url is None:
         base_url = config.api_base_url
     if token is None:
@@ -61,7 +60,6 @@ def _run_tui(
     base_url: StrOrNone,
     token: StrOrNone,
 ) -> None:
-    """Run an interactive command and handle user-requested exits consistently."""
     try:
         ctx_obj = get_context_obj(ctx)
         api_client = create_client(ctx_obj.config, base_url, token)
@@ -77,11 +75,12 @@ def _run_tui(
     print("Exited.")
 
 
-@api.command()
+@api.command(
+    help="Show sing-box traffic, memory statistics and connections, requires API token(Optional)"
+)
 def stats(
     ctx: typer.Context, base_url: ApiUrlOption = None, token: ApiTokenOption = None
 ) -> None:
-    """Show sing-box traffic, memory statistics and connections, requires API token(Optional)"""
     _run_tui(
         ctx,
         lambda client: ResourceMonitor(client, ResourceVisualizer()).start(),
@@ -90,29 +89,26 @@ def stats(
     )
 
 
-@api.command()
+@api.command(help="Manage sing-box connections, requires API token(Optional)")
 def conns(
     ctx: typer.Context, base_url: ApiUrlOption = None, token: ApiTokenOption = None
 ) -> None:
-    """Manage sing-box connections, requires API token(Optional)"""
     _run_tui(ctx, lambda client: ConnectionsManager(client).run(), base_url, token)
 
 
-@api.command()
+@api.command(help="Manage sing-box policy groups, requires API token(Optional)")
 def proxy(
     ctx: typer.Context, base_url: ApiUrlOption = None, token: ApiTokenOption = None
 ) -> None:
-    """Manage sing-box policy groups, requires API token(Optional)"""
     _run_tui(ctx, lambda client: PolicyGroupManager(client).run(), base_url, token)
 
 
-@api.command()
+@api.command(help="Show sing-box logs, requires API token(Optional)")
 def logs(
     ctx: typer.Context,
     log_level: LogLevelOption = LogLevel.info,
     base_url: ApiUrlOption = None,
     token: ApiTokenOption = None,
 ) -> None:
-    """Show sing-box logs, requires API token(Optional)"""
     print("⌛ Showing real-time logs (Press Ctrl+C to exit)")
     _run_tui(ctx, lambda client: get_logs(client, log_level), base_url, token)

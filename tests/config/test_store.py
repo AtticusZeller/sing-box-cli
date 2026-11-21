@@ -1,5 +1,3 @@
-"""The profile store: settings.db + profiles/, the layout of the sing-box desktop app."""
-
 import json
 import os
 import sqlite3
@@ -11,6 +9,7 @@ from typing import Any
 
 import pytest
 
+from sing_box_cli.config import store
 from sing_box_cli.config.store import (
     Profile,
     SettingsError,
@@ -66,7 +65,6 @@ def _seed_older_version(directory: Path, *, token: str = "ab-c") -> None:
     )
 
 
-# ================================================================ our own store
 def test_first_use_creates_an_empty_local_profile(tmp_path: Path) -> None:
     directory = tmp_path / "sing-box"
 
@@ -84,7 +82,6 @@ def test_first_use_creates_an_empty_local_profile(tmp_path: Path) -> None:
 
 @posix_only
 def test_new_store_is_private(tmp_path: Path) -> None:
-    """The subscription URL in it carries a token, the app keeps its own 0600 too."""
     _seed_older_version(tmp_path / "sing-box")
 
     profile = init_store(tmp_path / "sing-box")
@@ -107,13 +104,12 @@ def test_store_works_in_a_directory_with_spaces_and_other_characters(
     directory = tmp_path / "Test User #1" / "代理配置"
 
     profile = init_store(directory)
-    update_profile_record(directory, profile.id, remote_url=URL, make_remote=True)
+    update_profile_record(directory, profile.id, remote_url=URL, owned_store=True)
 
     assert active_profile(directory).remote_url == URL
 
 
 def test_the_store_has_the_desktop_apps_schema(tmp_path: Path) -> None:
-    """So the app, if installed later, takes the database over as it is."""
     init_store(tmp_path)
 
     db = sqlite3.connect(tmp_path / "settings.db")
@@ -149,15 +145,33 @@ def test_older_files_are_imported(tmp_path: Path) -> None:
     profile = init_store(directory)
 
     assert profile.path.read_text(encoding="utf-8") == OLD
-    # the separate token joins the URL, where the desktop app keeps it
     assert profile.remote_url == "https://h.example/p.json?token=ab-c"
     [(_, kind, url, _, _)] = _rows(directory)
     assert (kind, url) == ("remote", profile.remote_url)
     assert not (directory / "app_config.json").exists()
     assert (directory / "app_config.json.migrated").exists()
 
-    assert init_store(directory) == profile  # once
+    assert init_store(directory) == profile
     assert len(_rows(directory)) == 1
+
+
+def test_failed_retirement_keeps_the_imported_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    directory = tmp_path / "sing-box"
+    _seed_older_version(directory)
+
+    def fail(config_dir: Path, profile: Path) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(store, "_retire_legacy_files", fail)
+
+    with pytest.raises(SettingsError):
+        init_store(directory)
+
+    [(profile_id, *_)] = _rows(directory)
+    profile = directory / "profiles" / f"{profile_id}.json"
+    assert profile.read_text(encoding="utf-8") == OLD
 
 
 def test_older_files_without_a_subscription_become_a_local_profile(
@@ -177,7 +191,6 @@ def test_older_files_without_a_subscription_become_a_local_profile(
 
 @posix_only
 def test_old_config_path_becomes_a_link_to_the_profile(tmp_path: Path) -> None:
-    """A service created before keeps running config.json, which is the profile."""
     directory = tmp_path / "sing-box"
     _seed_older_version(directory)
 
@@ -190,7 +203,6 @@ def test_old_config_path_becomes_a_link_to_the_profile(tmp_path: Path) -> None:
 
 @posix_only
 def test_config_linked_elsewhere_by_the_user_is_imported(tmp_path: Path) -> None:
-    """config.json may already be a link, to a file the user keeps elsewhere."""
     directory = tmp_path / "sing-box"
     directory.mkdir()
     elsewhere = tmp_path / "dotfiles" / "sing-box.json"
@@ -202,7 +214,6 @@ def test_config_linked_elsewhere_by_the_user_is_imported(tmp_path: Path) -> None
 
     assert profile.path.read_text(encoding="utf-8") == OLD
     assert (directory / "config.json").resolve() == profile.path.resolve()
-    # their link is put aside, not followed or overwritten
     assert (directory / "config.json.migrated").resolve() == elsewhere.resolve()
     assert elsewhere.read_text(encoding="utf-8") == OLD
 
@@ -210,7 +221,6 @@ def test_config_linked_elsewhere_by_the_user_is_imported(tmp_path: Path) -> None
 def test_config_that_cannot_be_linked_stays_in_place(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Without the privilege to link (Windows) the old file is left where it is."""
     directory = tmp_path / "sing-box"
     _seed_older_version(directory)
 
@@ -239,10 +249,9 @@ def test_selection_is_repaired_from_the_profiles_that_exist(
 
     assert profile.id == "aaa"
     assert _selected(tmp_path) == "aaa"
-    assert len(_rows(tmp_path)) == 2  # nothing new was made up
+    assert len(_rows(tmp_path)) == 2
 
 
-# ============================================================ read-only views
 def test_legacy_profile_is_a_view_that_writes_nothing(tmp_path: Path) -> None:
     empty = tmp_path / "nothing-yet"
     assert legacy_profile(empty) == Profile(path=empty / "config.json", remote_url=None)
@@ -273,7 +282,7 @@ def test_active_profile_is_the_one_selected_in_the_app(
     )
 
     make_settings_db(tmp_path, selected="loc")
-    assert active_profile(tmp_path).remote_url is None  # a local profile
+    assert active_profile(tmp_path).remote_url is None
 
 
 def test_active_profile_never_guesses(
@@ -289,7 +298,7 @@ def test_active_profile_never_guesses(
     with pytest.raises(SettingsError, match="No profile is selected"):
         active_profile(tmp_path)
 
-    make_settings_db(tmp_path, selected="../aaa")  # not a profile id
+    make_settings_db(tmp_path, selected="../aaa")
     with pytest.raises(SettingsError, match="No profile is selected"):
         active_profile(tmp_path)
 
@@ -301,10 +310,9 @@ def test_active_profile_never_guesses(
     with pytest.raises(SettingsError, match="bbb.json not found"):
         active_profile(tmp_path)
 
-    assert not list(tmp_path.glob("settings.db-*"))  # and leaves nothing behind
+    assert not list(tmp_path.glob("settings.db-*"))
 
 
-# ==================================================================== updates
 def test_refresh_and_subscription_are_recorded(
     tmp_path: Path, make_settings_db: SettingsDb
 ) -> None:
@@ -324,12 +332,11 @@ def test_local_profile_becomes_remote_only_when_asked(
 ) -> None:
     make_settings_db(tmp_path, profiles={"loc": None})
 
-    # a local profile of the desktop app is not ours to change
     with pytest.raises(SettingsError, match="not a remote profile"):
         update_profile_record(tmp_path, "loc", remote_url=URL)
     assert _rows(tmp_path)[0][1:3] == ("local", None)
 
-    update_profile_record(tmp_path, "loc", remote_url=URL, make_remote=True)
+    update_profile_record(tmp_path, "loc", remote_url=URL, owned_store=True)
     assert _rows(tmp_path)[0][1:3] == ("remote", URL)
 
 
@@ -339,7 +346,6 @@ def test_updating_a_missing_store_is_an_error(tmp_path: Path) -> None:
     assert not (tmp_path / "settings.db").exists()
 
 
-# ======================================================================= sudo
 @linux_only
 def test_sudo_acts_as_the_invoking_user(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[Any] = []
@@ -359,7 +365,7 @@ def test_sudo_acts_as_the_invoking_user(monkeypatch: pytest.MonkeyPatch) -> None
 def test_without_sudo_nothing_changes(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[Any] = []
     monkeypatch.setattr(os, "seteuid", lambda value: calls.append(value))
-    monkeypatch.setattr(os, "geteuid", lambda: 0)  # root itself, not through sudo
+    monkeypatch.setattr(os, "geteuid", lambda: 0)
     monkeypatch.delenv("SUDO_UID", raising=False)
 
     with invoking_user():
@@ -368,7 +374,6 @@ def test_without_sudo_nothing_changes(monkeypatch: pytest.MonkeyPatch) -> None:
     assert calls == []
 
 
-# ==================================================================== helpers
 def test_with_token() -> None:
     assert with_token("https://h.example/p", "t") == "https://h.example/p?token=t"
     assert (
@@ -395,7 +400,7 @@ def test_atomic_write_replaces_the_content(tmp_path: Path) -> None:
     atomic_write_text(path, '{"new": true}')
 
     assert path.read_text(encoding="utf-8") == '{"new": true}'
-    assert _names(tmp_path) == ["profile.json"]  # no temporary file is left
+    assert _names(tmp_path) == ["profile.json"]
 
 
 @posix_only
@@ -407,3 +412,20 @@ def test_atomic_write_keeps_the_mode(tmp_path: Path) -> None:
     atomic_write_text(path, "{}")
 
     assert stat.S_IMODE(path.stat().st_mode) == 0o640
+
+
+@posix_only
+def test_atomic_write_keeps_the_owner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "profile.json"
+    path.write_text(OLD, encoding="utf-8")
+    st = path.stat()
+    calls: list[tuple[Path, int, int]] = []
+    monkeypatch.setattr(
+        os, "chown", lambda target, uid, gid: calls.append((Path(target), uid, gid))
+    )
+
+    atomic_write_text(path, "{}")
+
+    assert calls == [(tmp_path / ".profile.json.sbc-tmp", st.st_uid, st.st_gid)]
