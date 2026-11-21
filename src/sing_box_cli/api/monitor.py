@@ -33,25 +33,19 @@ class RefreshRate(Enum):
 
 def format_bytes(num_bytes_i: int | float) -> str:
     num_bytes = float(num_bytes_i)
-    for unit in ["B", "KB", "MB", "GB"]:
-        if num_bytes < 1024.0 or unit == "GB":
+    for unit in ["B", "KB", "MB"]:
+        if num_bytes < 1024.0:
             return f"{num_bytes:.2f} {unit}"
         num_bytes /= 1024.0
-
-    # This line should never be reached due to the "GB" condition above,
-    # but is needed to satisfy the type checker
     return f"{num_bytes:.2f} GB"
 
 
 def format_speed(bytes_per_sec_i: int | float) -> str:
     bytes_per_sec = float(bytes_per_sec_i)
-    for unit in ["B/s", "KB/s", "MB/s", "GB/s"]:
-        if bytes_per_sec < 1024.0 or unit == "GB/s":
+    for unit in ["B/s", "KB/s", "MB/s"]:
+        if bytes_per_sec < 1024.0:
             return f"{bytes_per_sec:.2f} {unit}"
         bytes_per_sec /= 1024.0
-
-    # This line should never be reached due to the "GB/s" condition above,
-    # but is needed to satisfy the type checker
     return f"{bytes_per_sec:.2f} GB/s"
 
 
@@ -469,7 +463,6 @@ class ResourceMonitor:
         self.running = False
         self.current_traffic = TrafficData(up=0, down=0)
         self.current_memory = MemoryData(inuse=0, total=0)
-        # 1.0 fix interval for avoiding repeated data
         self.task_interval = RefreshRate.SLOW.value
         self.reconnect_interval = RefreshRate.SLOW.value
         self.api_error: str | None = None

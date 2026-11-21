@@ -1,6 +1,7 @@
 import asyncio
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from io import StringIO
+from itertools import pairwise
 from unittest.mock import MagicMock
 
 import httpx
@@ -212,3 +213,56 @@ def test_format_rule_strips_route_action() -> None:
         monitor.format_rule("rule_set=proxy-rule => route(proxy)")
         == "rule_set=proxy-rule"
     )
+
+
+@pytest.mark.parametrize(
+    ("value", "unit_text"),
+    [
+        (0, "0.00 B"),
+        (1023, "1023.00 B"),
+        (1024, "1.00 KB"),
+        (1024**2, "1.00 MB"),
+        (1024**3, "1.00 GB"),
+        (1024**4, "1024.00 GB"),
+    ],
+)
+def test_format_bytes_and_speed_switch_units_at_1024(
+    value: int, unit_text: str
+) -> None:
+    assert monitor.format_bytes(value) == unit_text
+    assert monitor.format_speed(value) == f"{unit_text}/s"
+
+
+def test_monitor_pulls_stream_samples_no_faster_than_task_interval(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        loop = asyncio.get_running_loop()
+        pulled_at: list[float] = []
+
+        async def traffic_stream() -> AsyncIterator[TrafficData]:
+            for up in range(1, 4):
+                pulled_at.append(loop.time())
+                yield TrafficData(up=up)
+            await asyncio.Event().wait()
+
+        async def memory_stream() -> AsyncIterator[MemoryData]:
+            yield MemoryData(inuse=1)
+            await asyncio.Event().wait()
+
+        client = MagicMock()
+        client.traffic_stream.side_effect = traffic_stream
+        client.memory_stream.side_effect = memory_stream
+        resource_monitor = monitor.ResourceMonitor(client, MagicMock(refresh_rate=0.05))
+        resource_monitor.task_interval = 0.1
+        monkeypatch.setattr(monitor, "Live", MagicMock())
+        task = asyncio.create_task(resource_monitor.start())
+        try:
+            await wait_until(lambda: resource_monitor.current_traffic.up == 3)
+            gaps = [later - earlier for earlier, later in pairwise(pulled_at)]
+            assert min(gaps) >= 0.09
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(scenario())

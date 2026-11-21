@@ -1,4 +1,3 @@
-import importlib
 import json
 import os
 import sqlite3
@@ -6,16 +5,14 @@ import stat
 import sys
 from collections.abc import Callable
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from typing import Any, NamedTuple
 
 import pytest
 import typer
 
+import sing_box_cli.config.config as config_module
 from sing_box_cli.service import desktop
-
-# `sing_box_cli.config.config` is shadowed by the Typer app of the same name
-config_module = importlib.import_module("sing_box_cli.config.config")
 
 OLD = '{"experimental":{"clash_api":{"external_controller":"127.0.0.1:9090"}}}'
 NEW = '{\n"outbounds" : [],\n  "experimental":{"clash_api":{"external_controller":"127.0.0.1:9191"}}}\n'
@@ -479,3 +476,7 @@ def test_cache_db_is_under_the_run_working_directory(config_dir: Path) -> None:
     assert (
         handler.cache_db == Path(args[args.index("-D") + 1]) / handler.cache_file_path
     )
+
+
+def test_config_submodule_is_a_module_not_the_cli_app() -> None:
+    assert isinstance(config_module, ModuleType)

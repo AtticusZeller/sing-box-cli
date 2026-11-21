@@ -210,12 +210,6 @@ WantedBy=multi-user.target
         return self.service_file.exists()
 
     def _bring_up(self, action: str) -> None:
-        """Start or restart, ending the command unless the service is running after.
-
-        The unit is Type=exec: systemd reports success once the core is executed. A
-        core that exits right away, as on a configuration it rejects, is only seen a
-        moment later.
-        """
         if subprocess.run(["systemctl", action, self.service_name]).returncode != 0:
             print(f"❌ Failed to {action} service.")
             raise typer.Exit(1)

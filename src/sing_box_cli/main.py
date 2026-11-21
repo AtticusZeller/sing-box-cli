@@ -8,7 +8,7 @@ from rich import print
 
 from sing_box_cli.api import api as api_app
 from sing_box_cli.common import ClearCacheOption, UpdateConfigOption, ensure_root
-from sing_box_cli.config import config as config_app
+from sing_box_cli.config import config_app
 from sing_box_cli.config.config import get_config, run_args
 from sing_box_cli.config.serve import token_options
 from sing_box_cli.installation import install_launchers

@@ -86,6 +86,42 @@ def test_core_that_exits_right_after_starting_ends_the_command(
     assert "journalctl -u sing-box" in capsys.readouterr().out
 
 
+@pytest.mark.parametrize("action", ["start", "restart"])
+def test_core_exiting_soon_after_type_exec_start_ends_the_command(
+    manager: LinuxServiceManager,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    action: str,
+) -> None:
+    core_lifetime = 0.01
+    clock = 0.0
+    core_exits_at: float | None = None
+
+    def sleep(seconds: float) -> None:
+        nonlocal clock
+        clock += seconds
+
+    def run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        nonlocal core_exits_at
+        if command[:2] == ["systemctl", action]:
+            core_exits_at = clock + core_lifetime
+            return subprocess.CompletedProcess(command, 0)
+        if command[:2] == ["systemctl", "is-active"]:
+            running = core_exits_at is not None and clock < core_exits_at
+            return subprocess.CompletedProcess(command, 0 if running else 3)
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(manager_module.time, "sleep", sleep)
+    monkeypatch.setattr(manager_module.time, "monotonic", lambda: clock)
+    monkeypatch.setattr(subprocess, "run", run)
+
+    with pytest.raises(typer.Exit) as failure:
+        getattr(manager, action)()
+
+    assert failure.value.exit_code == 1
+    assert "journalctl -u sing-box" in capsys.readouterr().out
+
+
 @pytest.mark.parametrize(
     ("command", "success"),
     [
