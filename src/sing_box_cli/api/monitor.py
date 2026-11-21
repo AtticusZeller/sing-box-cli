@@ -86,18 +86,6 @@ def sort_connections(connections: list[ConnectionInfo]) -> list[ConnectionInfo]:
 
 
 def format_rule(rule: str) -> str:
-    """
-    Format a rule string for display.
-
-    This function takes a rule string and extracts the relevant parts for display.
-    It tries to extract the rule pattern, e.g., from "rule_set=proxy-rule => route(proxy)".
-
-    Args:
-        rule (str): The rule string to format.
-
-    Returns:
-        str: The formatted rule string.
-    """
     if rule:
         if "=>" in rule:
             rule_parts = rule.split("=>")

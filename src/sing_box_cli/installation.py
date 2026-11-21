@@ -27,20 +27,12 @@ def _privileged_run(args: list[str]) -> None:
 
 
 def launcher_content() -> str:
-    # Do not resolve the interpreter symlink: its venv path selects dependencies.
-    python = shlex.quote(os.path.abspath(sys.executable))
+    venv_python = shlex.quote(os.path.abspath(sys.executable))
     code = shlex.quote("from sing_box_cli import main; main()")
-    # Isolated mode keeps the working directory and PYTHONPATH out of imports.
-    return f'#!/bin/sh\n{LAUNCHER_MARKER}\nexec {python} -I -B -c {code} "$@"\n'
+    return f'#!/bin/sh\n{LAUNCHER_MARKER}\nexec {venv_python} -I -B -c {code} "$@"\n'
 
 
-def install_launchers(directory: Path) -> None:
-    _require_linux()
-    directory = directory.absolute()
-    if not directory.is_dir():
-        raise typer.BadParameter(f"Installation directory does not exist: {directory}")
-    destinations = [directory / name for name in ENTRY_POINTS]
-    # Validate both destinations before replacing either one.
+def _reject_unrelated_destinations(destinations: list[Path]) -> None:
     for destination in destinations:
         if destination.is_symlink():
             if destination.resolve().name not in ENTRY_POINTS:
@@ -55,6 +47,15 @@ def install_launchers(directory: Path) -> None:
                 raise typer.BadParameter(
                     f"Refusing to replace unrelated file: {destination}"
                 )
+
+
+def install_launchers(directory: Path) -> None:
+    _require_linux()
+    directory = directory.absolute()
+    if not directory.is_dir():
+        raise typer.BadParameter(f"Installation directory does not exist: {directory}")
+    destinations = [directory / name for name in ENTRY_POINTS]
+    _reject_unrelated_destinations(destinations)
     with tempfile.TemporaryDirectory(prefix="sbc-install-") as temporary:
         source = Path(temporary) / "launcher"
         source.write_text(launcher_content())

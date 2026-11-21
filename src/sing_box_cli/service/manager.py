@@ -6,11 +6,12 @@ import typer
 
 from ..config.config import ConfigHandler, run_args, run_cmd
 
+ERROR_SERVICE_DOES_NOT_EXIST = 1060
+
 
 class ServiceManager:
     requires_root = True
-    # Whether start() on a running service reloads it, so restart needs no stop.
-    hot_reload = False
+    restarts_in_place = False
     supports_purge_data = False
 
     def __init__(self, config: ConfigHandler) -> None:
@@ -102,7 +103,7 @@ class WindowsServiceManager(ServiceManager):
             capture_output=True,
             text=True,
         )
-        if result.returncode == 1060:  # ERROR_SERVICE_DOES_NOT_EXIST
+        if result.returncode == ERROR_SERVICE_DOES_NOT_EXIST:
             return False
         result.check_returncode()
         return True

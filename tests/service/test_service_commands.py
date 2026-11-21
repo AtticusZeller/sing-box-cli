@@ -43,7 +43,7 @@ class Recorder(ServiceManager):
 
 class ReloadingRecorder(Recorder):
     requires_root = False
-    hot_reload = True
+    restarts_in_place = True
 
 
 def invoke(service: ServiceManager, *args: str) -> None:
@@ -115,14 +115,22 @@ def test_restart_reloads_in_place_where_the_backend_can(root_checks: list[str]) 
 
 
 def test_reloading_backend_still_stops_to_clear_the_cache(
-    root_checks: list[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     service = ReloadingRecorder()
+    monkeypatch.setattr(
+        "sing_box_cli.service.ensure_root", lambda: service.calls.append("root")
+    )
 
     invoke(service, "restart", "--clear-cache")
 
-    assert service.calls == ["sync_service", "stop", "config.clear_cache", "start"]
-    assert root_checks == ["root"]  # checked before the stop, removal needs it
+    assert service.calls == [
+        "root",
+        "sync_service",
+        "stop",
+        "config.clear_cache",
+        "start",
+    ]
 
 
 class PurgingRecorder(ReloadingRecorder):
@@ -167,7 +175,10 @@ def test_purge_data_runs_after_confirmation(root_checks: list[str]) -> None:
     assert service.calls == ["sync_service", "stop", "purge_data", "start"]
 
 
-@pytest.mark.parametrize("answer", ["n\n", ""])  # "" is a non-interactive run
+@pytest.mark.parametrize(
+    "answer",
+    [pytest.param("n\n", id="declined"), pytest.param("", id="non-interactive")],
+)
 def test_purge_data_is_aborted_without_confirmation(
     root_checks: list[str], answer: str
 ) -> None:

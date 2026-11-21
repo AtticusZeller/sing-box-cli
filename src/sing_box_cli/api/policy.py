@@ -1,3 +1,5 @@
+from typing import TypeAlias
+
 from prompt_toolkit.application import Application
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.key_binding import KeyBindings
@@ -11,6 +13,10 @@ from rich.text import Text
 
 from .client import GroupInfo, SingBoxAPIClient
 from .widget import create_header_panel, render_rich_to_prompt_toolkit
+
+GroupName: TypeAlias = str
+ProxyName: TypeAlias = str
+DelayMs: TypeAlias = int
 
 
 def create_policy_group_table(
@@ -41,10 +47,9 @@ def create_policy_group_table(
             else:
                 latency = "Timeout"
         elif i == group_data.all.index(current):
-            # [0]->latest delay for the current proxy
-            delay = history[0].delay if history else -1
-            if delay > 0:
-                latency = f"{delay} ms"
+            current_proxy_latest_delay = history[0].delay if history else -1
+            if current_proxy_latest_delay > 0:
+                latency = f"{current_proxy_latest_delay} ms"
             else:
                 latency = "Timeout"
 
@@ -77,8 +82,7 @@ class PolicyGroupManager:
         self.current_group: GroupInfo | None = None
         self.status_message = "Loading policy groups..."
 
-        # Format: {group_name: {proxy_name: delay_value}}
-        self.delay_cache: dict[str, dict[str, int]] = {}
+        self.delay_cache: dict[GroupName, dict[ProxyName, DelayMs]] = {}
 
         self.kb = KeyBindings()
         self.setup_keybindings()

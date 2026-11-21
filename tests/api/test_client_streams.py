@@ -50,11 +50,9 @@ def test_closing_stream_closes_underlying_request(
 
 
 @pytest.mark.parametrize("method", ["traffic_stream", "memory_stream", "log_stream"])
-def test_stream_request_bounds_connect_but_not_read(
+def test_stream_bounds_connect_for_dead_api_but_not_read_for_idle_logs(
     method: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A dead remote API must not hang reconnects; idle log streams must not time out."""
-
     async def scenario() -> None:
         timeouts: list[dict[str, Any]] = []
 

@@ -149,11 +149,14 @@ class SingBoxAPIClient:
     ) -> AsyncGenerator[T, None]:
         url = f"{self.base_url}{endpoint}"
 
-        # streams may stay idle for long, so only reads are unbounded
-        timeout = httpx.Timeout(self.timeout, read=None)
+        idle_stream_timeout = httpx.Timeout(self.timeout, read=None)
         async with httpx.AsyncClient() as client:
             async with client.stream(
-                "GET", url, headers=self.headers, params=params, timeout=timeout
+                "GET",
+                url,
+                headers=self.headers,
+                params=params,
+                timeout=idle_stream_timeout,
             ) as response:
                 response.raise_for_status()
                 async for line in response.aiter_lines():
@@ -209,16 +212,9 @@ class SingBoxAPIClient:
         self,
         group_name: str,
         url: str = "https://cp.cloudflare.com/generate_204",
-        timeout: int = 5000,
+        timeout_ms: int = 5000,
     ) -> list[DelayTestResult]:
-        """
-        Test delay for all proxies in a policy group.
-
-        Args:
-            group_name: Name of the policy group
-            timeout: Timeout in milliseconds
-        """
-        params = {"url": url, "timeout": timeout}
+        params = {"url": url, "timeout": timeout_ms}
         reps = await self._make_request_raw(
             "GET", f"/group/{group_name}/delay", params=params
         )
@@ -230,15 +226,9 @@ class SingBoxAPIClient:
         self,
         proxy_name: str,
         url: str = "https://cp.cloudflare.com/generate_204",
-        timeout: int = 5000,
+        timeout_ms: int = 5000,
     ) -> DelayTestResult:
-        """
-        Test delay for a specific proxy.
-
-        Args:
-            timeout: Timeout in milliseconds
-        """
-        params = {"url": url, "timeout": timeout}
+        params = {"url": url, "timeout": timeout_ms}
         return await self._make_request(
             "GET",
             f"/proxies/{proxy_name}/delay",

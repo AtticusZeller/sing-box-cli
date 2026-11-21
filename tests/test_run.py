@@ -17,7 +17,7 @@ def test_run_preserves_paths_with_spaces(monkeypatch: pytest.MonkeyPatch) -> Non
     config.config_dir = Path("C:/Users/Test User/代理配置")
     config.config_file = config.config_dir / "config.json"
     config.config_file_content = '{"log": {}}'
-    monkeypatch.setattr(main, "get_config", lambda: config)
+    monkeypatch.setattr(main, "get_config", lambda initialize: config)
     monkeypatch.setattr(main, "create_service", lambda _config: MagicMock())
     monkeypatch.setattr(main, "ensure_root", lambda: None)
     run = MagicMock()

@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 
+from sing_box_cli.config import store
 from sing_box_cli.config.store import (
     Profile,
     SettingsError,
@@ -103,7 +104,7 @@ def test_store_works_in_a_directory_with_spaces_and_other_characters(
     directory = tmp_path / "Test User #1" / "代理配置"
 
     profile = init_store(directory)
-    update_profile_record(directory, profile.id, remote_url=URL, make_remote=True)
+    update_profile_record(directory, profile.id, remote_url=URL, owned_store=True)
 
     assert active_profile(directory).remote_url == URL
 
@@ -152,6 +153,25 @@ def test_older_files_are_imported(tmp_path: Path) -> None:
 
     assert init_store(directory) == profile
     assert len(_rows(directory)) == 1
+
+
+def test_failed_retirement_keeps_the_imported_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    directory = tmp_path / "sing-box"
+    _seed_older_version(directory)
+
+    def fail(config_dir: Path, profile: Path) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(store, "_retire_legacy_files", fail)
+
+    with pytest.raises(SettingsError):
+        init_store(directory)
+
+    [(profile_id, *_)] = _rows(directory)
+    profile = directory / "profiles" / f"{profile_id}.json"
+    assert profile.read_text(encoding="utf-8") == OLD
 
 
 def test_older_files_without_a_subscription_become_a_local_profile(
@@ -316,7 +336,7 @@ def test_local_profile_becomes_remote_only_when_asked(
         update_profile_record(tmp_path, "loc", remote_url=URL)
     assert _rows(tmp_path)[0][1:3] == ("local", None)
 
-    update_profile_record(tmp_path, "loc", remote_url=URL, make_remote=True)
+    update_profile_record(tmp_path, "loc", remote_url=URL, owned_store=True)
     assert _rows(tmp_path)[0][1:3] == ("remote", URL)
 
 
@@ -392,3 +412,20 @@ def test_atomic_write_keeps_the_mode(tmp_path: Path) -> None:
     atomic_write_text(path, "{}")
 
     assert stat.S_IMODE(path.stat().st_mode) == 0o640
+
+
+@posix_only
+def test_atomic_write_keeps_the_owner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "profile.json"
+    path.write_text(OLD, encoding="utf-8")
+    st = path.stat()
+    calls: list[tuple[Path, int, int]] = []
+    monkeypatch.setattr(
+        os, "chown", lambda target, uid, gid: calls.append((Path(target), uid, gid))
+    )
+
+    atomic_write_text(path, "{}")
+
+    assert calls == [(tmp_path / ".profile.json.sbc-tmp", st.st_uid, st.st_gid)]

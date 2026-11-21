@@ -210,6 +210,20 @@ def test_real_core_accepts_configuration(content: bytes) -> None:
     backend.validate_config(content)
 
 
+def test_core_output_is_not_relayed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        backend.subprocess,
+        "run",
+        lambda *a, **kw: subprocess.CompletedProcess(
+            args=[], returncode=1, stdout=b"secret", stderr=b"secret"
+        ),
+    )
+    with pytest.raises(backend.ServeError) as error:
+        backend.validate_config(VALID_CONFIG)
+    assert error.value.status == 422
+    assert "secret" not in str(error.value)
+
+
 def test_registration_and_list_cli(
     cli_environment: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -397,6 +411,20 @@ def test_http_passthrough_updates_deletions_and_validation(
             client.get("/alice.json", headers={"Host": "other.example.com"}).status_code
             == 401
         )
+
+
+def test_http_requests_are_not_logged(
+    http_service: tuple[str, dict[str, bytes]], capfd: pytest.CaptureFixture[str]
+) -> None:
+    url, _files = http_service
+    with httpx.Client(base_url=url, trust_env=False) as client:
+        client.get(
+            "/alice.json?token=old-client-token",
+            headers={"Authorization": "Bearer old-client-token"},
+        )
+    err = capfd.readouterr().err
+    assert "old-client-token" not in err
+    assert "alice.json" not in err
 
 
 def test_existing_downloader_requires_subscription_token(

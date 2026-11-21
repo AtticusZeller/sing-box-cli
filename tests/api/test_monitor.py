@@ -205,3 +205,10 @@ def test_resources_layout_shows_api_error() -> None:
         )
     )
     assert "sing-box API unreachable, reconnecting..." in output.getvalue()
+
+
+def test_format_rule_strips_route_action() -> None:
+    assert (
+        monitor.format_rule("rule_set=proxy-rule => route(proxy)")
+        == "rule_set=proxy-rule"
+    )

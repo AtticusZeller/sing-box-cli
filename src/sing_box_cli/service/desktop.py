@@ -6,6 +6,7 @@ import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from enum import IntEnum
 from pathlib import Path
 from typing import Any
 
@@ -31,13 +32,35 @@ _DESTROY_WORKING_DIRECTORY = "/desktop.DesktopService/DestroyWorkingDirectory"
 _STOP_SERVICE = "/daemon.ManagedService/StopService"
 _SUBSCRIBE_SERVICE_STATUS = "/daemon.StartedService/SubscribeServiceStatus"
 
-# desktop.DaemonOwnership
-_OWNERSHIP_AVAILABLE = 1
-_OWNERSHIP_OTHER = 3
+_START_SERVICE_REQUEST_CONFIG_CONTENT = 1
+_START_SERVICE_REQUEST_OPTIONS = 2
+_START_OPTIONS_OOM_KILLER_ENABLED = 1
+_START_OPTIONS_OOM_KILLER_DISABLED = 2
+_START_OPTIONS_OOM_MEMORY_LIMIT = 3
+_START_OPTIONS_POWER_REPORT_ENABLED = 4
 
-# daemon.ServiceStatus.Type
-_STATUS_NAMES = {0: "Stopped", 1: "Starting", 2: "Running", 3: "Stopping", 4: "Fatal"}
-_STATUS_IDLE = 0
+
+class DaemonOwnership(IntEnum):
+    AVAILABLE = 1
+    CALLER = 2
+    OTHER = 3
+
+
+class ServiceStatusType(IntEnum):
+    IDLE = 0
+    STARTING = 1
+    STARTED = 2
+    STOPPING = 3
+    FATAL = 4
+
+
+_STATUS_NAMES: dict[int, str] = {
+    ServiceStatusType.IDLE: "Stopped",
+    ServiceStatusType.STARTING: "Starting",
+    ServiceStatusType.STARTED: "Running",
+    ServiceStatusType.STOPPING: "Stopping",
+    ServiceStatusType.FATAL: "Fatal",
+}
 
 
 @dataclass(frozen=True)
@@ -142,17 +165,20 @@ def _field_bytes(number: int, payload: bytes) -> bytes:
 def encode_start_request(
     config_content: str, options: StartOptions | None = None
 ) -> bytes:
-    """desktop.StartServiceRequest{config_content, options: desktop.StartOptions}"""
     opts = options or StartOptions()
     body = b""
     if opts.oom_killer_enabled:
-        body += _field_varint(1, 1)
+        body += _field_varint(_START_OPTIONS_OOM_KILLER_ENABLED, 1)
     if opts.oom_killer_disabled:
-        body += _field_varint(2, 1)
-    body += _field_varint(3, opts.oom_memory_limit_mb * 1024 * 1024)
+        body += _field_varint(_START_OPTIONS_OOM_KILLER_DISABLED, 1)
+    body += _field_varint(
+        _START_OPTIONS_OOM_MEMORY_LIMIT, opts.oom_memory_limit_mb * 1024 * 1024
+    )
     if opts.power_report_enabled:
-        body += _field_varint(4, 1)
-    return _field_bytes(1, config_content.encode("utf-8")) + _field_bytes(2, body)
+        body += _field_varint(_START_OPTIONS_POWER_REPORT_ENABLED, 1)
+    return _field_bytes(
+        _START_SERVICE_REQUEST_CONFIG_CONTENT, config_content.encode("utf-8")
+    ) + _field_bytes(_START_SERVICE_REQUEST_OPTIONS, body)
 
 
 def decode_fields(data: bytes) -> dict[int, int | bytes]:
@@ -187,7 +213,7 @@ def _as_int(value: int | bytes | None) -> int:
 class DesktopDaemonServiceManager(ServiceManager):
     requires_root = False
     # KEEP: StartService on a running core reloads it in place (https://github.com/SagerNet/sing-box/blob/v1.14.4/experimental/boxdd/server.go#L239)
-    hot_reload = True
+    restarts_in_place = True
     supports_purge_data = True
     _rpc_deadline: float | None = None
 
@@ -285,11 +311,11 @@ class DesktopDaemonServiceManager(ServiceManager):
                 "run as that user (or with sudo from it)."
             )
         ownership = _as_int(self._daemon_info().get(2))
-        if ownership == _OWNERSHIP_AVAILABLE:
+        if ownership == DaemonOwnership.AVAILABLE:
             raise DesktopDaemonError(
                 "The desktop daemon has no owner yet, open the sing-box app once."
             )
-        if ownership == _OWNERSHIP_OTHER:
+        if ownership == DaemonOwnership.OTHER:
             raise DesktopDaemonError("The desktop daemon is owned by another user.")
 
     def _service_status(self) -> tuple[int, str]:
@@ -370,11 +396,11 @@ class DesktopDaemonServiceManager(ServiceManager):
     def _stop_core_verified(self) -> None:
         with invoking_user(), self._rpc_budget(_LIFECYCLE_TIMEOUT):
             self._ensure_owner()
-            if self._service_status()[0] != _STATUS_IDLE:
+            if self._service_status()[0] != ServiceStatusType.IDLE:
                 print("⏳ Stopping desktop core.")
                 self._call(_STOP_SERVICE)
                 print("⏳ Verifying desktop core is stopped.")
-                while self._service_status()[0] != _STATUS_IDLE:
+                while self._service_status()[0] != ServiceStatusType.IDLE:
                     remaining = (self._rpc_deadline or 0) - time.monotonic()
                     if remaining <= 0:
                         raise DesktopDaemonError("Core stop verification timed out.")
@@ -406,7 +432,7 @@ class DesktopDaemonServiceManager(ServiceManager):
     def stop(self) -> None:
         with self._guard():
             self._ensure_owner()
-            if self._service_status()[0] != _STATUS_IDLE:
+            if self._service_status()[0] != ServiceStatusType.IDLE:
                 self._call(_STOP_SERVICE)
 
     def restart(self) -> None:
@@ -422,7 +448,7 @@ class DesktopDaemonServiceManager(ServiceManager):
                     "sing-box daemon returned no working directory"
                 )
             directory = Path(path)
-            was_running = self._service_status()[0] != _STATUS_IDLE
+            was_running = self._service_status()[0] != ServiceStatusType.IDLE
         ensure_root()
         # KEEP: the core resolves the cache path against its working directory and refuses paths outside it unless insecure mode is on (https://github.com/SagerNet/sing-box/blob/v1.14.4/experimental/boxdd/insecure_mode_supported.go#L54-L105)
         cache = (directory / self.config.cache_file_path).resolve()

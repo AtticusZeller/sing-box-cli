@@ -260,6 +260,11 @@ class GitHub:
         return content
 
 
+def _check_copy_without_android_only_options(data: dict[str, Any]) -> bytes:
+    route = {**data["route"], "override_android_vpn": False}
+    return json.dumps({**data, "route": route}).encode()
+
+
 def validate_config(content: bytes) -> None:
     try:
         data = json.loads(content)
@@ -270,10 +275,7 @@ def validate_config(content: bytes) -> None:
     validation_content = content
     route = data.get("route")
     if isinstance(route, dict) and route.get("override_android_vpn") is True:
-        # The server's core cannot initialize this Android-only option. Disable
-        # it only in the check copy; HTTP responses retain the original bytes.
-        route["override_android_vpn"] = False
-        validation_content = json.dumps(data).encode()
+        validation_content = _check_copy_without_android_only_options(data)
     binary = str(get_bin_path())
     try:
         with tempfile.TemporaryDirectory(prefix="sbc-check-") as directory:
@@ -288,7 +290,6 @@ def validate_config(content: bytes) -> None:
     except (OSError, subprocess.TimeoutExpired):
         raise ServeError("sing-box configuration validation could not complete.", 503)
     if result.returncode:
-        # Core errors may contain configuration secrets; never relay its output.
         raise ServeError("Configuration failed sing-box validation.", 422)
 
 
@@ -354,5 +355,4 @@ class ConfigRequestHandler(BaseHTTPRequestHandler):
             pass
 
     def log_message(self, format: str, *args: Any) -> None:
-        # Do not log URLs, incoming Authorization headers or configuration bodies.
         pass

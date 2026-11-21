@@ -66,11 +66,6 @@ def with_token(url: str, token: str) -> str:
 
 
 def atomic_write_text(path: Path, content: str) -> None:
-    """Replace ``path`` in one step, keeping its mode and owner.
-
-    The file may belong to another application that reads it at any time, and
-    root must not turn a user's file into a root-owned one.
-    """
     tmp = path.with_name(f".{path.name}.sbc-tmp")
     st = path.stat() if path.exists() else None
     tmp.write_text(content, encoding="utf-8", newline="")

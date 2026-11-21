@@ -7,7 +7,7 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, NamedTuple
 
 import pytest
 import typer
@@ -18,8 +18,8 @@ from sing_box_cli.service import desktop
 config_module = importlib.import_module("sing_box_cli.config.config")
 
 OLD = '{"experimental":{"clash_api":{"external_controller":"127.0.0.1:9090"}}}'
-# deliberately not what pydantic would dump, the desktop app compares raw bytes
 NEW = '{\n"outbounds" : [],\n  "experimental":{"clash_api":{"external_controller":"127.0.0.1:9191"}}}\n'
+assert config_module.ConfigHandler._normalized(NEW) != NEW
 APP_URL = "https://sub.example.com/client.json?token=s3cret"
 APP_URL_BARE = "https://sub.example.com/client.json"
 
@@ -90,21 +90,23 @@ def _snapshot(directory: Path) -> dict[str, bytes | str]:
     }
 
 
+class App(NamedTuple):
+    profile: Path
+    settings_db: Path
+
+
 @pytest.fixture
-def app(
-    config_dir: Path, make_settings_db: SettingsDb, installed_app: None
-) -> tuple[Path, Path]:
-    """A desktop app with one selected remote profile: (profile file, settings.db)."""
+def app(config_dir: Path, make_settings_db: SettingsDb, installed_app: None) -> App:
     (config_dir / "profiles").mkdir(parents=True)
     profile = config_dir / "profiles" / "aaa.json"
     profile.write_text(OLD)
     profile.chmod(0o600)
     db = make_settings_db(config_dir, selected="aaa", profiles={"aaa": APP_URL})
-    return profile, db
+    return App(profile, db)
 
 
 def test_profile_and_subscription_come_from_the_app(
-    config_dir: Path, app: tuple[Path, Path], served: Serve
+    config_dir: Path, app: App, served: Serve
 ) -> None:
     profile, db_path = app
     other = config_dir / "profiles" / "bbb.json"
@@ -143,9 +145,7 @@ def test_sbc_creates_nothing_next_to_the_app(config_dir: Path, served: Serve) ->
     assert not (config_dir / "app_config.json").exists()
 
 
-def test_new_subscription_is_written_to_the_app(
-    app: tuple[Path, Path], served: Serve
-) -> None:
+def test_new_subscription_is_written_to_the_app(app: App, served: Serve) -> None:
     _, db_path = app
     other = "https://other.example.com/b.json?token=xyz&flag=1"
     requested = served(NEW)
@@ -161,9 +161,7 @@ def test_new_subscription_is_written_to_the_app(
     )
 
 
-def test_separate_token_is_stored_inside_the_url(
-    app: tuple[Path, Path], served: Serve
-) -> None:
+def test_separate_token_is_stored_inside_the_url(app: App, served: Serve) -> None:
     _, db_path = app
     served(NEW)
 
@@ -174,9 +172,7 @@ def test_separate_token_is_stored_inside_the_url(
     assert _profiles(db_path)[0][2] == "https://other.example.com/b.json?token=t-1"
 
 
-def test_new_url_without_token_keeps_the_saved_token(
-    app: tuple[Path, Path], served: Serve
-) -> None:
+def test_new_url_without_token_keeps_the_saved_token(app: App, served: Serve) -> None:
     _, db_path = app
     requested = served(NEW)
 
@@ -186,9 +182,7 @@ def test_new_url_without_token_keeps_the_saved_token(
     assert _profiles(db_path)[0][2] == "https://other.example.com/b.json?token=s3cret"
 
 
-def test_subscription_not_saved_when_download_fails(
-    app: tuple[Path, Path], served: Serve
-) -> None:
+def test_subscription_not_saved_when_download_fails(app: App, served: Serve) -> None:
     profile, db_path = app
     served(None)
 
@@ -197,9 +191,7 @@ def test_subscription_not_saved_when_download_fails(
     assert profile.read_text() == OLD
 
 
-def test_profile_untouched_on_invalid_download(
-    app: tuple[Path, Path], served: Serve
-) -> None:
+def test_profile_untouched_on_invalid_download(app: App, served: Serve) -> None:
     profile, db_path = app
     served("<html>login</html>")
 
@@ -209,7 +201,7 @@ def test_profile_untouched_on_invalid_download(
 
 
 def test_formatting_alone_is_not_a_change(
-    app: tuple[Path, Path], served: Serve, capsys: pytest.CaptureFixture[str]
+    app: App, served: Serve, capsys: pytest.CaptureFixture[str]
 ) -> None:
     profile, _ = app
     served(json.dumps(json.loads(OLD), indent=4) + "\n")
@@ -221,10 +213,7 @@ def test_formatting_alone_is_not_a_change(
 
 
 def test_dry_run_changes_nothing_in_the_app(
-    config_dir: Path,
-    app: tuple[Path, Path],
-    served: Serve,
-    capsys: pytest.CaptureFixture[str],
+    config_dir: Path, app: App, served: Serve, capsys: pytest.CaptureFixture[str]
 ) -> None:
     _, db_path = app
     served(NEW)
@@ -298,7 +287,7 @@ def test_no_selected_profile_is_an_error(
 ) -> None:
     (config_dir / "profiles").mkdir(parents=True)
     (config_dir / "profiles" / "p.json").write_text(OLD)
-    make_settings_db(config_dir, profiles={"p": APP_URL})  # nothing selected
+    make_settings_db(config_dir, selected=None, profiles={"p": APP_URL})
 
     with pytest.raises(typer.Exit):
         config_module.get_config().update_config()
@@ -309,12 +298,12 @@ def test_no_selected_profile_is_an_error(
 def test_installed_app_wins_over_files_on_disk(
     config_dir: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """The app is installed (its unit exists) although its daemon is not running."""
     unit = tmp_path / "sing-box-daemon.service"
     unit.write_text("")
     monkeypatch.setattr(desktop, "DAEMON_UNIT", unit)
     config_dir.mkdir(parents=True)
     (config_dir / "config.json").write_text(OLD)
+    monkeypatch.setattr(desktop, "desktop_daemon_available", lambda: False)
 
     handler = config_module.get_config()
 
@@ -403,7 +392,8 @@ def test_update_goes_through_the_old_config_path_too(
     handler = config_module.get_config()
     assert handler.update_config("https://example.com/sub")
 
-    assert handler.legacy_config is None  # it is a link to the profile now
+    assert handler.legacy_config is None
+    assert (config_dir / "config.json").is_symlink()
     assert (config_dir / "config.json").read_text() == NEW
 
 
@@ -459,3 +449,33 @@ def test_constructor_is_silent(
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err == ""
+
+
+def test_remove_cache_db_reports_failures_without_raising(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    errors = iter([PermissionError("denied"), OSError("busy")])
+
+    def unlink(self: Path, missing_ok: bool = False) -> None:
+        raise next(errors)
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+    config_module.remove_cache_db(tmp_path / "cache.db")
+    assert "Permission denied" in capsys.readouterr().out
+    config_module.remove_cache_db(tmp_path / "cache.db")
+    assert "Failed to remove cache database" in capsys.readouterr().out
+
+
+def test_cache_file_path_defaults_to_sing_box_default(config_dir: Path) -> None:
+    handler = config_module.get_config()
+
+    assert handler.cache_file_path == "cache.db"
+
+
+def test_cache_db_is_under_the_run_working_directory(config_dir: Path) -> None:
+    handler = config_module.get_config()
+    args = config_module.run_args(handler)
+
+    assert (
+        handler.cache_db == Path(args[args.index("-D") + 1]) / handler.cache_file_path
+    )

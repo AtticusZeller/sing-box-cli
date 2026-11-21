@@ -8,7 +8,7 @@ from collections.abc import Iterator
 from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from .utils import with_token
 
@@ -72,8 +72,7 @@ def settings_path(config_dir: Path) -> Path:
     return config_dir / "settings.db"
 
 
-def _settings_uri(path: Path, mode: str) -> str:
-    """An SQLite URI that never creates the file, valid for Windows drive paths too."""
+def _existing_db_uri(path: Path, mode: Literal["ro", "rw"]) -> str:
     return f"{path.absolute().as_uri()}?mode={mode}"
 
 
@@ -85,7 +84,7 @@ def settings_query(
         raise SettingsError(
             f"The sing-box app's settings ({path}) do not exist, open the app once."
         )
-    uri = _settings_uri(path, "ro")
+    uri = _existing_db_uri(path, "ro")
     try:
         with invoking_user(), closing(sqlite3.connect(uri, uri=True, timeout=2)) as db:
             rows: list[tuple[Any, ...]] = db.execute(sql, params).fetchall()
@@ -134,26 +133,19 @@ def update_profile_record(
     profile_id: str,
     *,
     remote_url: str | None = None,
-    make_remote: bool = False,
+    owned_store: bool = False,
 ) -> None:
-    """Record a refresh of a profile and, if given, its new subscription URL.
-
-    ``last_updated`` is set as the app does after a refresh, ``remote_url`` when
-    the subscription was changed from the command line, so everyone shares one
-    subscription. ``make_remote`` turns a local profile into a remote one, which is
-    only for a store sbc owns. A single UPDATE, SQLite serialises it with the app.
-    """
     path = settings_path(config_dir)
     assignments = ["last_updated = ?"]
     params: list[int | str] = [int(time.time() * 1000)]
     if remote_url is not None:
         assignments.append("remote_url = ?")
         params.append(remote_url)
-        if make_remote:
+        if owned_store:
             assignments.append("type = 'remote'")
-    where = "id = ?" if make_remote else "id = ? AND type = 'remote'"
+    where = "id = ?" if owned_store else "id = ? AND type = 'remote'"
     params.append(profile_id)
-    uri = _settings_uri(path, "rw")
+    uri = _existing_db_uri(path, "rw")
     try:
         with (
             invoking_user(),
@@ -205,7 +197,6 @@ def init_store(config_dir: Path) -> Profile:
                     imported = True
             profile = _profile_of(config_dir, profile_id)
             if imported:
-                # only once the store is committed: nothing is lost if this fails
                 _retire_legacy_files(config_dir, profile.path)
     except (sqlite3.Error, OSError) as e:
         raise SettingsError(f"Cannot use the settings ({path}): {e}") from e

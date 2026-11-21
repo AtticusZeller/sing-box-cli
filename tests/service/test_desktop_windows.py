@@ -16,7 +16,7 @@ from sing_box_cli.config.store import SettingsError
 from sing_box_cli.service import desktop, desktop_windows as windows
 
 config_module = importlib.import_module("sing_box_cli.config.config")
-REGISTRY_READER = windows._registry_values
+REAL_REGISTRY_READER = windows._registry_values
 
 
 @pytest.mark.parametrize("key", [windows.SERVICE_KEY, windows.INSTALLATION_KEY])
@@ -54,7 +54,12 @@ def test_installer_directory_overrides_appdata(
 
     layout["ApplicationDataDirectory"] = ""
     assert windows.application_data_directory(tmp_path) == tmp_path
-    layout["LayoutVersion"] = None  # older installer
+
+
+def test_missing_layout_version_is_an_older_installation_using_appdata(
+    tmp_path: Path, layout: dict[str, object]
+) -> None:
+    layout["LayoutVersion"] = None
     assert windows.application_data_directory(tmp_path) == tmp_path
 
 
@@ -132,8 +137,7 @@ def test_registry_errors_are_not_treated_as_no_app(
             OpenKey=denied, HKEY_LOCAL_MACHINE=0, KEY_READ=1, KEY_WOW64_64KEY=2
         ),
     )
-    # Replace the test suite's default stub with the real reader.
-    monkeypatch.setattr(windows, "_registry_values", REGISTRY_READER)
+    monkeypatch.setattr(windows, "_registry_values", REAL_REGISTRY_READER)
     with pytest.raises(SettingsError, match="Cannot read"):
         windows.application_data_directory(tmp_path)
 
@@ -142,6 +146,7 @@ def test_registry_reader_uses_native_view_and_preserves_literal_paths(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[tuple[object, ...]] = []
+    reg_expand_sz = 2
     monkeypatch.setattr(windows.sys, "platform", "win32")
 
     def open_key(*args: object) -> Any:
@@ -151,7 +156,7 @@ def test_registry_reader_uses_native_view_and_preserves_literal_paths(
     def query_value(handle: object, name: str) -> tuple[object, int]:
         if name == "missing":
             raise FileNotFoundError
-        return r"%APPDATA%\sing-box", 2  # REG_EXPAND_SZ: the app does not expand it
+        return r"%APPDATA%\sing-box", reg_expand_sz
 
     monkeypatch.setitem(
         sys.modules,
@@ -162,9 +167,10 @@ def test_registry_reader_uses_native_view_and_preserves_literal_paths(
             HKEY_LOCAL_MACHINE=0,
             KEY_READ=1,
             KEY_WOW64_64KEY=2,
+            REG_EXPAND_SZ=reg_expand_sz,
         ),
     )
-    assert REGISTRY_READER(windows.INSTALLATION_KEY, ("path", "missing")) == {
+    assert REAL_REGISTRY_READER(windows.INSTALLATION_KEY, ("path", "missing")) == {
         "path": r"%APPDATA%\sing-box",
         "missing": None,
     }

@@ -37,9 +37,12 @@ class ClashApiConfig(BaseModel):
     secret: str = Field(default="")
 
 
+SING_BOX_DEFAULT_CACHE_FILE = "cache.db"
+
+
 class CacheFileConfig(BaseModel):
     enabled: bool = Field(default=True)
-    path: str = Field(default="cache.db")
+    path: str = Field(default=SING_BOX_DEFAULT_CACHE_FILE)
 
 
 class ExperimentalConfig(BaseModel):
@@ -68,7 +71,6 @@ class SingBoxConfig(ConfigModel):
 
 
 def remove_cache_db(path: Path) -> None:
-    """Remove a cache database and report the outcome; failures do not raise."""
     try:
         path.unlink(missing_ok=False)
         print("🗑️ Cache database removed.")
@@ -198,11 +200,10 @@ class ConfigHandler:
         experimental = self._sing_box_config.experimental
         if experimental and experimental.cache_file and experimental.cache_file.path:
             return experimental.cache_file.path
-        return "cache.db"  # sing-box's default
+        return SING_BOX_DEFAULT_CACHE_FILE
 
     @property
     def cache_db(self) -> Path:
-        """The cache database of the standalone core, which runs in the config dir."""
         return self._config_dir / self.cache_file_path
 
     @property
@@ -284,7 +285,7 @@ class ConfigHandler:
             self._config_dir,
             profile.id,
             remote_url=stored,
-            make_remote=not self._desktop_app,
+            owned_store=not self._desktop_app,
         )
         self._profile = dataclasses.replace(profile, remote_url=stored)
         print("📁 Subscription updated successfully.")

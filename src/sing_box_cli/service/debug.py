@@ -1,5 +1,3 @@
-"""Explicit Linux desktop takeover; never depends on the desktop RPC service."""
-
 import os
 import signal
 import subprocess
@@ -238,7 +236,6 @@ def _verify_stopped(
                     _SYSTEMCTL_TIMEOUT, max(0.001, deadline - time.monotonic())
                 )
                 _assert_stopped(unit, _unit_state(unit, timeout=timeout))
-                # Also check the original group if systemd has cleared ControlGroup.
                 if original["ControlGroup"]:
                     _assert_group_empty(unit, original["ControlGroup"])
             remaining = [
@@ -280,7 +277,6 @@ def _stop_units(units: tuple[str, ...] | None = None) -> None:
     for unit in loaded:
         print(f"⏳ Submitting non-blocking stop: {unit}")
         _systemctl(["--no-block", "stop", unit])
-    # Catch children created between the initial snapshot and stop-job submission.
     processes.update(_managed_processes(groups))
     print(f"⏳ Sending TERM to managed PIDs: {sorted(processes)}")
     signalled = _signal_managed(processes)

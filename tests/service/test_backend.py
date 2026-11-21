@@ -29,7 +29,7 @@ def test_without_desktop_app_uses_systemd_backend(
 
     assert type(service) is LinuxServiceManager
     assert service.requires_root
-    assert not service.hot_reload
+    assert not service.restarts_in_place
     assert "grpc" not in sys.modules
 
 
@@ -44,7 +44,7 @@ def test_windows_keeps_its_own_backend() -> None:
 
     assert type(service) is WindowsServiceManager
     assert service.requires_root
-    assert not service.hot_reload
+    assert not service.restarts_in_place
 
 
 def test_windows_desktop_never_selects_the_standalone_service() -> None:

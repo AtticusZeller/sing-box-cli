@@ -101,7 +101,7 @@ def test_commands_do_not_report_success_on_start_failure(
 ) -> None:
     main = importlib.import_module("sing_box_cli.main")
     service = importlib.import_module("sing_box_cli.service")
-    monkeypatch.setattr(main, "get_config", lambda: manager.config)
+    monkeypatch.setattr(main, "get_config", lambda **_: manager.config)
     monkeypatch.setattr(main, "create_service", lambda _config: manager)
     monkeypatch.setattr(service, "ensure_root", lambda: None)
 

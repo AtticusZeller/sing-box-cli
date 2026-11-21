@@ -77,7 +77,7 @@ def test_output_encoding_policy(monkeypatch: pytest.MonkeyPatch, platform: str) 
         "sys",
         SimpleNamespace(platform=platform, stdout=streams[0], stderr=streams[1]),
     )
-    main._configure_console_output()
+    main._replace_unencodable_output_on_windows()
     assert [stream.encoding for stream in streams] == ["cp1252", "utf-8"]
     for stream in streams:
         assert stream.errors == ("replace" if platform == "win32" else "strict")
@@ -97,12 +97,12 @@ def test_stream_without_reconfigure(
     monkeypatch.setattr(
         main, "sys", SimpleNamespace(platform="win32", stdout=stream, stderr=stderr)
     )
-    main._configure_console_output()
+    main._replace_unencodable_output_on_windows()
     stderr.reconfigure.assert_called_once_with(errors="replace")
 
 
 @pytest.mark.parametrize("error", [OSError, ValueError, io.UnsupportedOperation])
-def test_unavailable_stream_does_not_block_stderr(
+def test_unreconfigurable_stream_does_not_block_stderr(
     monkeypatch: pytest.MonkeyPatch, error: type[Exception]
 ) -> None:
     stdout, stderr = Mock(), Mock()
@@ -110,5 +110,5 @@ def test_unavailable_stream_does_not_block_stderr(
     monkeypatch.setattr(
         main, "sys", SimpleNamespace(platform="win32", stdout=stdout, stderr=stderr)
     )
-    main._configure_console_output()
+    main._replace_unencodable_output_on_windows()
     stderr.reconfigure.assert_called_once_with(errors="replace")

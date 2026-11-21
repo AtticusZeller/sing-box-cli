@@ -25,7 +25,7 @@ class _Handler(BaseHTTPRequestHandler):
         elif path == "/connections":
             self._send_json(200, api.connections)
         elif path in ("/traffic", "/memory", "/logs"):
-            self._stream(path)
+            self._stream_then_drop(path)
         else:
             self._send_json(404, {"message": "Not Found"})
 
@@ -37,7 +37,7 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-    def _stream(self, path: str) -> None:
+    def _stream_then_drop(self, path: str) -> None:
         api = self.server.api
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -46,7 +46,7 @@ class _Handler(BaseHTTPRequestHandler):
         self.close_connection = True
         sent = 0
         while not self.server.stopped.is_set():
-            if path == "/logs" and sent >= api.log_limit:
+            if path == "/logs" and sent >= api.logs_before_drop:
                 break
             line = (json.dumps(api.stream_payload(path)) + "\n").encode()
             try:
@@ -56,7 +56,6 @@ class _Handler(BaseHTTPRequestHandler):
                 return
             sent += 1
             time.sleep(0.02)
-        # Return without the terminating chunk, like a crashed sing-box process.
 
 
 class _Server(ThreadingHTTPServer):
@@ -81,7 +80,7 @@ class FakeSingBox:
             "downloadTotal": 20,
             "connections": [],
         }
-        self.log_limit = 3
+        self.logs_before_drop = 3
         self._server: _Server | None = None
         self._thread: threading.Thread | None = None
 
