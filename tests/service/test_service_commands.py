@@ -1,5 +1,3 @@
-"""The service commands against a recording backend."""
-
 from types import SimpleNamespace
 from typing import Any
 
@@ -113,7 +111,7 @@ def test_restart_reloads_in_place_where_the_backend_can(root_checks: list[str]) 
     invoke(service, "restart")
 
     assert service.calls == ["sync_service", "restart"]
-    assert root_checks == []  # this backend does not need root
+    assert root_checks == []
 
 
 def test_reloading_backend_still_stops_to_clear_the_cache(
@@ -181,7 +179,7 @@ def test_purge_data_is_aborted_without_confirmation(
     )
 
     assert result.exit_code == 1
-    assert service.calls == []  # nothing stopped or deleted
+    assert service.calls == []
 
 
 @pytest.mark.parametrize("command", ["enable", "disable", "stop", "status"])

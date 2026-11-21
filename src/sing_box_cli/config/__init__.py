@@ -57,7 +57,6 @@ def config_update(
         service = create_service(cfg)
         if service.requires_root:
             ensure_root()
-        # init service
         if service.check_service():
             service.sync_service()
         else:

@@ -1,5 +1,3 @@
-"""Windows desktop layout, store ownership and unsupported service controls."""
-
 import importlib
 import subprocess
 import sys
@@ -52,7 +50,7 @@ def test_installer_directory_overrides_appdata(
     tmp_path: Path, layout: dict[str, object]
 ) -> None:
     assert windows.application_data_directory(tmp_path) == tmp_path / "shared data"
-    assert not (tmp_path / "shared data").exists()  # reading never creates it
+    assert not (tmp_path / "shared data").exists()
 
     layout["ApplicationDataDirectory"] = ""
     assert windows.application_data_directory(tmp_path) == tmp_path
@@ -196,7 +194,6 @@ def test_desktop_commands_report_authentication_limit_without_starting_another_s
 
 @pytest.fixture
 def daemon_executable(monkeypatch: pytest.MonkeyPatch) -> str:
-    """Only inspect the official service; no profile, API or bundled core is needed."""
     executable = r"C:\Program Files\sing-box\resources\daemon\sing-box-daemon.exe"
     monkeypatch.setattr(windows.sys, "platform", "win32")
     monkeypatch.setattr(
@@ -224,7 +221,7 @@ def test_version_reads_the_desktop_daemon_without_an_api_or_profile(
         )
 
     monkeypatch.setattr(subprocess, "run", run)
-    config = SimpleNamespace()  # deliberately has no API address or bin_path
+    config = SimpleNamespace()
     service = windows.WindowsDesktopServiceManager(config)
     main = importlib.import_module("sing_box_cli.main")
 

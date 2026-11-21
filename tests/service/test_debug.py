@@ -1,5 +1,3 @@
-"""Explicit desktop takeover without using gRPC or changing the host's services."""
-
 import importlib
 import os
 import signal
@@ -410,8 +408,6 @@ def test_exited_or_reused_identity_is_not_signalled(
     env = managed_units
     env.processes[42].is_running.return_value = False
 
-    # The stale cgroup snapshot still mentions this PID, but the cached identity
-    # is no longer running. It must not signal whatever reused that number.
     def stop(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         result = env.handler(args, **kwargs)
         if args[1] == "--no-block":
@@ -630,7 +626,6 @@ def test_real_store_is_preserved(
     monkeypatch.setenv("USER", "")
     monkeypatch.setenv("SUDO_USER", "")
     monkeypatch.setattr(ConfigHandler, "user", property(lambda _: ""))
-    # ConfigHandler uses ~<user>; empty user resolves the test HOME.
     monkeypatch.setattr(desktop, "desktop_app_installed", lambda: True)
     cfg = ConfigHandler()
     assert cfg.init_directories()

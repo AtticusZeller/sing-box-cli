@@ -42,7 +42,6 @@ def seed_configs(directory: Path) -> None:
 
 
 def stored(directory: Path) -> tuple[dict[str, Any], str | None]:
-    """The selected profile of the store: (its configuration, its subscription)."""
     db = sqlite3.connect(directory / "settings.db")
     try:
         (data,) = db.execute(
@@ -79,7 +78,6 @@ def test_dry_run_only_previews(
         return_value=httpx.Response(200, json={"log": {"level": "debug"}})
     )
     monkeypatch.setattr(handler, "request_get", request)
-    # Exercise the Linux ownership branch as well as first-use initialization.
     monkeypatch.setattr(ConfigHandler, "is_windows", property(lambda _: False))
     original_init = ConfigHandler.__init__
 
@@ -174,7 +172,6 @@ def test_normal_update_saves_config_and_subscription(
     assert result.exit_code == 0, result.output
     content, subscription = stored(client_directory)
     assert content["log"] == {"level": "debug"}
-    # kept the way the desktop app keeps it: one URL carrying its token
     assert subscription == NEW_URL + "?token=new-token"
     assert not (client_directory / "app_config.json").exists()
 

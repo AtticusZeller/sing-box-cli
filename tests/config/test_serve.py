@@ -464,7 +464,6 @@ def test_detached_start_stop_and_stale_state(cli_environment: Path) -> None:
         )
         assert result.exit_code == 0 and "Already running" in result.output
         assert process_state(cli_environment) == state
-        # Host is not registered: a live response without making any GitHub request.
         response = httpx.get(f"http://127.0.0.1:{port}/missing.json", trust_env=False)
         assert response.status_code == 401
         for _ in range(2):
@@ -483,7 +482,6 @@ def test_detached_start_stop_and_stale_state(cli_environment: Path) -> None:
         backend.write_json(cli_environment / "process.json", stale.model_dump())
         assert stop_server(cli_environment) is False
         assert unrelated.is_running()
-        # A stale PID does not prevent a new instance from starting.
         backend.write_json(cli_environment / "process.json", stale.model_dump())
         new_state, started = start_server(cli_environment, "127.0.0.1", port)
         assert started and new_state.instance != stale.instance

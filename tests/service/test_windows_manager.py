@@ -194,7 +194,6 @@ def test_status_display(
 def test_sync_points_an_older_service_at_the_profile_once(
     manager: WindowsServiceManager, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """config.json could not become a link: the service is moved to the profile."""
     legacy = manager.config.config_dir / "config.json"
     legacy.write_text("{}", encoding="utf-8")
     manager.config.config_file = manager.config.config_dir / "profiles" / "abc.json"

@@ -1,5 +1,3 @@
-"""CLI registration and detached process lifecycle for config delivery."""
-
 import contextlib
 import subprocess
 import sys
@@ -337,7 +335,6 @@ def token_options(
 
 
 def token_create(name: str, domain: str, filename: str) -> None:
-    """Generate a file-scoped token and print its secret and URL once."""
     with command_errors():
         domain = normalize_domain(domain)
         directory = state_directory()
@@ -357,7 +354,6 @@ def token_create(name: str, domain: str, filename: str) -> None:
 
 
 def token_list() -> None:
-    """List token names and scopes without displaying their secrets."""
     with command_errors():
         entries = load_tokens(state_directory())
         if not entries:

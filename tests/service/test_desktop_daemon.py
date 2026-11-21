@@ -1,5 +1,3 @@
-"""The desktop backend against a fake daemon speaking the real wire format."""
-
 import json
 import shutil
 import sys
@@ -35,8 +33,6 @@ IDLE, STARTED = 0, 2
 
 
 class FakeDaemon(grpc.GenericRpcHandler):  # type: ignore[misc]
-    """Just enough of the daemon: ownership, service status, start, stop, destroy."""
-
     def __init__(self, ownership: int = OWNER_CALLER) -> None:
         self.ownership = ownership
         self.status = STARTED
@@ -88,7 +84,8 @@ class FakeDaemon(grpc.GenericRpcHandler):  # type: ignore[misc]
 
 @pytest.fixture
 def daemon(monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeDaemon]:
-    directory = tempfile.mkdtemp(prefix="sbc-")  # unix socket paths are short
+    # KEEP: AF_UNIX paths are limited to 108 bytes and tmp_path can exceed it (https://man7.org/linux/man-pages/man7/unix.7.html)
+    directory = tempfile.mkdtemp(prefix="sbc-")
     path = Path(directory) / "d.sock"
     fake = FakeDaemon()
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
@@ -103,7 +100,6 @@ def daemon(monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeDaemon]:
 
 @pytest.fixture
 def app_dir(tmp_path: Path, make_settings_db: Callable[..., Path]) -> Path:
-    """The app's data directory with profile ``p`` selected."""
     directory = tmp_path / "sing-box"
     (directory / "profiles").mkdir(parents=True)
     (directory / "profiles" / "p.json").write_text('{"log":{}}')
@@ -122,7 +118,6 @@ def _manager(app_dir: Path, cache: str = "cache.db") -> DesktopDaemonServiceMana
 def work_dir(
     daemon: FakeDaemon, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> Path:
-    """The daemon's working directory with a cache and Tailscale state; runs "as root"."""
     directory = tmp_path / "users" / "abc"
     (directory / "tailscale").mkdir(parents=True)
     (directory / "tailscale" / "tailscaled.state").write_text("node key")
@@ -266,7 +261,7 @@ def test_clear_cache_refuses_a_path_outside_the_working_directory(
         _manager(app_dir, cache).clear_cache()
 
     assert "outside the daemon's working directory" in capsys.readouterr().out
-    assert daemon.calls == []  # not even stopped
+    assert daemon.calls == []
     assert (work_dir / "cache.db").exists()
 
 
@@ -276,7 +271,7 @@ def test_restart_command_reloads_in_place(daemon: FakeDaemon, app_dir: Path) -> 
     result = CliRunner().invoke(service_app, ["restart"], obj=obj)
 
     assert result.exit_code == 0, result.output
-    assert daemon.calls == ["StartService"]  # no stop in between
+    assert daemon.calls == ["StartService"]
 
 
 def test_restart_with_clear_cache_goes_through_a_stop(
@@ -304,7 +299,6 @@ def test_restart_with_purge_data_destroys_the_working_directory(
 
 
 def test_json_of_profile_is_untouched(daemon: FakeDaemon, app_dir: Path) -> None:
-    """What reaches the daemon is the profile file, byte for byte."""
     text = json.dumps({"outbounds": [], "x": "é"}, ensure_ascii=False)
     (app_dir / "profiles" / "p.json").write_text(text, encoding="utf-8")
 
@@ -315,7 +309,6 @@ def test_json_of_profile_is_untouched(daemon: FakeDaemon, app_dir: Path) -> None
 
 @pytest.fixture
 def lifecycle(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
-    """Systemd is recorded, never connected to the host's manager."""
     from sing_box_cli.service import debug
 
     originals = (debug._systemctl, debug._unit_state, debug._stop_units)

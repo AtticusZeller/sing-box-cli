@@ -47,7 +47,6 @@ api = typer.Typer(help="sing-box manager.")
 def create_client(
     config: ConfigHandler, base_url: StrOrNone = None, token: StrOrNone = None
 ) -> SingBoxAPIClient:
-    # read from config if not provided
     if base_url is None:
         base_url = config.api_base_url
     if token is None:
@@ -61,7 +60,6 @@ def _run_tui(
     base_url: StrOrNone,
     token: StrOrNone,
 ) -> None:
-    """Run an interactive command and handle user-requested exits consistently."""
     try:
         ctx_obj = get_context_obj(ctx)
         api_client = create_client(ctx_obj.config, base_url, token)

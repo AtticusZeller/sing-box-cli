@@ -204,13 +204,11 @@ def test_command_exit_status(
 
     result = CliRunner().invoke(api.api, [command])
     if error_type is httpx.ConnectError:
-        # API failures are reported, not dumped as a traceback
         assert result.exit_code == 1, result.output
         assert isinstance(result.exception, SystemExit)
         assert result.output.count("Error:") == 1
         assert "stopped" in result.output
     elif error_type in (RuntimeError, ValueError):
-        # programming errors (including pydantic ValidationError) still surface
         assert result.exit_code != 0
         assert isinstance(result.exception, error_type)
         assert "Exited." not in result.output

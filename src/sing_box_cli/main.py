@@ -90,12 +90,10 @@ def run(
     if purge:
         cfg.clear_cache()
 
-    # stop if empty
     if cfg.config_file_content == "{}":
         print("❌ Configuration file is empty.")
         raise typer.Exit(1)
 
-    # run
     cmd = run_args(cfg)
     subprocess.run(cmd)
 

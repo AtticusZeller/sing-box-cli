@@ -1,5 +1,3 @@
-"""Read-only GitHub configuration sources and HTTP delivery."""
-
 import base64
 import binascii
 import json

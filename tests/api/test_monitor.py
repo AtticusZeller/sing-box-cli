@@ -140,7 +140,6 @@ def test_monitor_reconnects_after_singbox_restart(
             assert footer_error() is None
 
             fake_singbox.stop()
-            # stale numbers must not linger while sing-box is down
             await wait_until(
                 lambda: resource_monitor.current_traffic == TrafficData()
                 and resource_monitor.current_memory == MemoryData()

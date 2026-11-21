@@ -1,5 +1,3 @@
-"""System launchers that avoid privileged writes to Python environments."""
-
 import os
 import shlex
 import subprocess

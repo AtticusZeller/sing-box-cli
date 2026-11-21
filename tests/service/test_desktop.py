@@ -1,5 +1,3 @@
-"""The sing-box desktop app backend: detection, start options and the wire format."""
-
 import socket
 import sys
 from collections.abc import Callable
@@ -62,7 +60,6 @@ def test_backend_needs_no_root_and_reloads_in_place() -> None:
 
 
 def test_stopped_daemon_is_reported(capsys: pytest.CaptureFixture[str]) -> None:
-    """App installed, daemon down: say so instead of failing somewhere deeper."""
     config: Any = SimpleNamespace()
     service = DesktopDaemonServiceManager(config)
 

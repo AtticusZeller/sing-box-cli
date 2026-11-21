@@ -1,5 +1,3 @@
-"""ConfigHandler on the profile store, with and without the sing-box desktop app."""
-
 import importlib
 import json
 import os
@@ -44,7 +42,6 @@ def config_dir(
     )
     monkeypatch.setenv("USER", "tester")
     monkeypatch.delenv("SUDO_USER", raising=False)
-    # where the config directory comes from, on Linux and on Windows
     monkeypatch.setattr(Path, "expanduser", lambda self: directory)
     monkeypatch.setattr(
         config_module.typer, "get_app_dir", lambda *_, **__: str(directory)
@@ -54,13 +51,11 @@ def config_dir(
 
 @pytest.fixture
 def installed_app(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Profile ownership is independent of the platform's daemon transport."""
     monkeypatch.setattr(desktop, "desktop_app_installed", lambda: True)
 
 
 @pytest.fixture
 def served(monkeypatch: pytest.MonkeyPatch) -> Serve:
-    """Serve ``text`` (None: download fails); returns the (url, token) requests."""
 
     def serve(text: str | None) -> list[tuple[str, str]]:
         requested: list[tuple[str, str]] = []
@@ -95,7 +90,6 @@ def _snapshot(directory: Path) -> dict[str, bytes | str]:
     }
 
 
-# ============================================================ desktop app installed
 @pytest.fixture
 def app(
     config_dir: Path, make_settings_db: SettingsDb, installed_app: None
@@ -113,29 +107,28 @@ def test_profile_and_subscription_come_from_the_app(
     config_dir: Path, app: tuple[Path, Path], served: Serve
 ) -> None:
     profile, db_path = app
-    other = config_dir / "profiles" / "bbb.json"  # newer, but not selected
+    other = config_dir / "profiles" / "bbb.json"
     other.write_text("{}")
     requested = served(NEW)
 
     handler = config_module.get_config()
     assert handler.external_config
     assert handler.config_file == profile
-    # the token stays out of what is shown, it is sent as a bearer token
     assert handler.sub_url == APP_URL_BARE
     assert handler.token_content == "s3cret"
     assert handler.api_base_url == "http://127.0.0.1:9090"
 
-    assert handler.update_config()  # no URL: the app's own one
+    assert handler.update_config()
 
     assert requested == [(APP_URL_BARE, "s3cret")]
-    assert profile.read_bytes() == NEW.encode("utf-8")  # no CRLF conversion on Windows
+    assert profile.read_bytes() == NEW.encode("utf-8")
     if os.name != "nt":
         assert stat.S_IMODE(profile.stat().st_mode) == 0o600
     assert other.read_text() == "{}"
     assert not list((config_dir / "profiles").glob(".*"))
     [(_, _, url, updated)] = _profiles(db_path)
-    assert url == APP_URL  # the app's URL is left exactly as it was
-    assert updated is not None  # and the app lists the refresh
+    assert url == APP_URL
+    assert updated is not None
 
 
 @pytest.mark.usefixtures("app")
@@ -160,8 +153,8 @@ def test_new_subscription_is_written_to_the_app(
     assert config_module.get_config().update_config(other)
 
     assert requested == [("https://other.example.com/b.json?flag=1", "xyz")]
-    assert _profiles(db_path)[0][2] == other  # stored as given
-    again = config_module.ConfigHandler()  # a new run sees it too
+    assert _profiles(db_path)[0][2] == other
+    again = config_module.ConfigHandler()
     assert (again.sub_url, again.token_content) == (
         "https://other.example.com/b.json?flag=1",
         "xyz",
@@ -273,7 +266,7 @@ def test_unreadable_app_settings_are_an_error_not_a_guess(
     config_dir: Path, served: Serve, capsys: pytest.CaptureFixture[str]
 ) -> None:
     (config_dir / "profiles").mkdir(parents=True)
-    (config_dir / "profiles" / "p.json").write_text(OLD)  # a guess would find it
+    (config_dir / "profiles" / "p.json").write_text(OLD)
     (config_dir / "config.json").write_text(OLD)
     (config_dir / "app_config.json").write_text(
         json.dumps({"subscription_url": "https://sbc.example.com/x"})
@@ -282,7 +275,7 @@ def test_unreadable_app_settings_are_an_error_not_a_guess(
     before = _snapshot(config_dir)
 
     handler = config_module.get_config()
-    assert handler.external_config  # still the desktop app, never the systemd path
+    assert handler.external_config
     capsys.readouterr()
 
     for action in (
@@ -296,7 +289,6 @@ def test_unreadable_app_settings_are_an_error_not_a_guess(
         assert "settings" in capsys.readouterr().out
 
     assert requested == []
-    # nothing imported, nothing created: the store is the app's to create
     assert _snapshot(config_dir) == before
 
 
@@ -322,7 +314,7 @@ def test_installed_app_wins_over_files_on_disk(
     unit.write_text("")
     monkeypatch.setattr(desktop, "DAEMON_UNIT", unit)
     config_dir.mkdir(parents=True)
-    (config_dir / "config.json").write_text(OLD)  # sbc's own file from before
+    (config_dir / "config.json").write_text(OLD)
 
     handler = config_module.get_config()
 
@@ -331,7 +323,6 @@ def test_installed_app_wins_over_files_on_disk(
     assert not (config_dir / "settings.db").exists()
 
 
-# ================================================================ no desktop app
 def test_reading_creates_nothing(config_dir: Path) -> None:
     handler = config_module.get_config(initialize=False)
 
@@ -351,7 +342,7 @@ def test_first_use_creates_the_store(config_dir: Path) -> None:
     assert not handler.external_config
     assert handler.sub_url == ""
     assert handler.legacy_config is None
-    assert config_module.get_config().config_file == handler.config_file  # once
+    assert config_module.get_config().config_file == handler.config_file
 
 
 def test_subscription_of_a_local_profile_makes_it_remote(
@@ -367,7 +358,6 @@ def test_subscription_of_a_local_profile_makes_it_remote(
     assert updated is not None
     assert requested == [("https://example.com/sub", "t")]
     assert (config_dir / "profiles" / f"{profile_id}.json").read_text() == NEW
-    # and the next run, and `config update` without a URL, use it
     again = config_module.get_config()
     assert (again.sub_url, again.token_content) == ("https://example.com/sub", "t")
     assert again.update_config()
@@ -384,11 +374,10 @@ def test_older_files_are_shown_before_and_imported_on_first_use(
     )
     before = _snapshot(config_dir)
 
-    # reading shows the very same values without importing anything yet
     peek = config_module.get_config(initialize=False)
     assert (peek.sub_url, peek.token_content) == ("https://h.example/p.json", "ab-c")
     assert peek.config_file_content == OLD
-    assert peek.legacy_config is None  # nothing to follow up before the import
+    assert peek.legacy_config is None
     assert _snapshot(config_dir) == before
 
     handler = config_module.get_config()
@@ -396,7 +385,7 @@ def test_older_files_are_shown_before_and_imported_on_first_use(
     [(profile_id, kind, url, _)] = _profiles(config_dir / "settings.db")
     assert (kind, url) == ("remote", "https://h.example/p.json?token=ab-c")
     assert handler.config_file == config_dir / "profiles" / f"{profile_id}.json"
-    assert handler.config_file_content == OLD  # the configuration is kept as it was
+    assert handler.config_file_content == OLD
     assert (handler.sub_url, handler.token_content) == (
         "https://h.example/p.json",
         "ab-c",
@@ -407,7 +396,6 @@ def test_older_files_are_shown_before_and_imported_on_first_use(
 def test_update_goes_through_the_old_config_path_too(
     config_dir: Path, served: Serve
 ) -> None:
-    """A service created before keeps running config.json, which is the profile."""
     config_dir.mkdir(parents=True)
     (config_dir / "config.json").write_text(OLD)
     served(NEW)
@@ -422,7 +410,6 @@ def test_update_goes_through_the_old_config_path_too(
 def test_config_that_cannot_be_linked_is_left_for_the_service_sync(
     config_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Without the privilege to link (Windows) the old file stays where it is."""
     config_dir.mkdir(parents=True)
     (config_dir / "config.json").write_text(OLD)
 

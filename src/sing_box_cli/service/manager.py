@@ -8,11 +8,9 @@ from ..config.config import ConfigHandler, run_args, run_cmd
 
 
 class ServiceManager:
-    # Whether service commands must run as root/Administrator.
     requires_root = True
     # Whether start() on a running service reloads it, so restart needs no stop.
     hot_reload = False
-    # Whether purge_data() exists: only the desktop daemon keeps such data.
     supports_purge_data = False
 
     def __init__(self, config: ConfigHandler) -> None:
@@ -40,12 +38,10 @@ class ServiceManager:
         raise NotImplementedError()
 
     def enable_service(self) -> None:
-        """Enable and start the complete service managed by this backend."""
         self.create_service()
         self.start()
 
     def disable_service(self) -> str:
-        """Stop and disable the complete service; return the actual result."""
         self.stop()
         self.disable()
         return "Autostart disabled."
@@ -53,28 +49,23 @@ class ServiceManager:
     def version(self) -> str:
         raise NotImplementedError()
 
-    def sync_service(self) -> None:
-        """Make an existing service run the current configuration file."""
+    def sync_service(self) -> None: ...
 
     def clear_cache(self) -> None:
-        """Remove the cache database, the service is expected to be stopped."""
         self.config.clear_cache()
 
     def purge_data(self) -> None:
-        """Delete the service's data besides the configuration; service stopped."""
         raise NotImplementedError()
 
 
 class WindowsServiceManager(ServiceManager):
-    """Windows SCM service managed by the bundled native Go helper."""
-
     def __init__(self, config: ConfigHandler) -> None:
         super().__init__(config)
         self.service_name = "sing-box-service"
 
     @property
     def helper_bin(self) -> str:
-        # Match sing-box-bin: Windows always ships the amd64 executable.
+        # KEEP: sing-box-bin ships only the Windows amd64 core, so only the amd64 helper is bundled (#25)
         binary = Path(__file__).parents[1] / "bin" / "sbc-service-windows-amd64.exe"
         if not binary.is_file():
             raise FileNotFoundError(
@@ -83,7 +74,7 @@ class WindowsServiceManager(ServiceManager):
         return str(binary)
 
     def create_service(self) -> None:
-        self.check_service()  # Fail on SCM access errors before attempting installation.
+        self.check_service()
         subprocess.run(
             [
                 self.helper_bin,
@@ -99,13 +90,6 @@ class WindowsServiceManager(ServiceManager):
         )
 
     def sync_service(self) -> None:
-        """Point a service installed by an older version at the profile, once.
-
-        The configuration file is the selected profile now. Where config.json could
-        not be turned into a link to it, the service still runs that file. The
-        helper's install updates an existing service in place, after which the old
-        file is put aside. A failure propagates like any other helper error.
-        """
         legacy = self.config.legacy_config
         if legacy is None:
             return
@@ -183,11 +167,6 @@ class LinuxServiceManager(ServiceManager):
         self.service_file = Path("/etc/systemd/system/sing-box.service")
 
     def create_service(self) -> None:
-        """systemctl list-units | grep -i network
-        Refs:
-            1. https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html#Type
-            2. https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html#Scheduling
-        """
         self.service_file.write_text(self._unit_content())
         subprocess.run(["systemctl", "daemon-reload"])
         subprocess.run(["systemctl", "enable", self.service_name])
@@ -219,7 +198,6 @@ WantedBy=multi-user.target
 """
 
     def sync_service(self) -> None:
-        """The configuration file is the selected profile, rewrite a unit that differs."""
         if (
             self.service_file.exists()
             and self.service_file.read_text() != self._unit_content()
@@ -284,7 +262,6 @@ def create_service(config: ConfigHandler) -> ServiceManager:
             from .desktop_windows import WindowsDesktopServiceManager
 
             return WindowsDesktopServiceManager(config)
-        # Lazy import keeps grpc (optional) out of every machine without the desktop app.
         from .desktop import DesktopDaemonServiceManager
 
         return DesktopDaemonServiceManager(config)

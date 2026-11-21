@@ -1,5 +1,3 @@
-"""Bundle the small Windows SCM helper; the CLI remains Python."""
-
 import os
 import shutil
 import subprocess
@@ -21,7 +19,7 @@ class CustomBuildHook(BuildHookInterface):
         root = Path(self.root)
         output = root / "build" / "windows-service"
         output.mkdir(parents=True, exist_ok=True)
-        # Match sing-box-bin's single Windows amd64 resource.
+        # KEEP: sing-box-bin ships only the Windows amd64 core, so only the amd64 helper is built (#25)
         filename = "sbc-service-windows-amd64.exe"
         destination = output / filename
         subprocess.run(

@@ -32,33 +32,24 @@ from .utils import (
 
 
 class ClashApiConfig(BaseModel):
-    """Clash API configuration settings."""
-
     external_controller: str = Field(default="127.0.0.1:9090")
     default_mode: str = Field(default="Rule")
     secret: str = Field(default="")
 
 
 class CacheFileConfig(BaseModel):
-    """Cache file configuration settings."""
-
     enabled: bool = Field(default=True)
     path: str = Field(default="cache.db")
 
 
 class ExperimentalConfig(BaseModel):
-    """Experimental features configuration."""
-
     cache_file: CacheFileConfig | None = Field(default=None)
     clash_api: ClashApiConfig | None = Field(default=None)
 
 
 class ConfigModel(BaseModel):
-    """Load configuration files."""
-
     @classmethod
     def load(cls, config_path: Path) -> Self:
-        """Load configuration from file or create with defaults if not exists."""
         if config_path.exists():
             try:
                 return cls.model_validate(
@@ -71,12 +62,8 @@ class ConfigModel(BaseModel):
 
 
 class SingBoxConfig(ConfigModel):
-    """Model representing the sing-box configuration file structure."""
-
-    # We only model the parts we interact with directly
     experimental: ExperimentalConfig | None = Field(default=None)
 
-    # Other fields will be preserved but not explicitly modeled
     model_config = ConfigDict(extra="allow")
 
 
@@ -108,15 +95,9 @@ class ConfigHandler:
             except SettingsError as e:
                 print(f"❌ {e}")
                 raise typer.Exit(1) from e
-        # Everything lives in the profile store (see config.store): the selected profile
-        # is the configuration and its subscription URL is the subscription. With the
-        # sing-box desktop app installed the store is the app's: it is only read, and an
-        # unusable one is reported, never worked around. Without the app the store is
-        # ours and init_directories() creates it.
         self._desktop_app = self._detect_desktop_app()
         self._profile: Profile | None = None
         self._profile_error: str | None = None
-        # False while showing the files of an older version, before our store exists
         self._store_ready = False
         try:
             self._profile = active_profile(self._config_dir)
@@ -129,7 +110,6 @@ class ConfigHandler:
         self._load_config_file()
 
     def _detect_desktop_app(self) -> bool:
-        # Lazy import: the service package imports this module.
         from ..service.desktop import desktop_app_installed
 
         try:
@@ -139,7 +119,6 @@ class ConfigHandler:
             raise typer.Exit(1) from e
 
     def _load_config_file(self) -> None:
-        # never read or written without a profile, see _require_profile()
         self._config_file = (
             self._profile.path
             if self._profile
@@ -148,14 +127,12 @@ class ConfigHandler:
         self._sing_box_config = SingBoxConfig.load(self._config_file)
 
     def _require_profile(self) -> Profile:
-        """The selected profile, or report why there is none and exit."""
         if self._profile is None:
             print(f"❌ {self._profile_error}")
             raise typer.Exit(1)
         return self._profile
 
     def _require_store(self) -> Profile:
-        """The selected profile of a store that may be written."""
         profile = self._require_profile()
         if not self._store_ready:
             raise RuntimeError("The profile store is not initialized.")
@@ -163,23 +140,16 @@ class ConfigHandler:
 
     @property
     def external_config(self) -> bool:
-        """Whether the sing-box desktop app owns the configuration."""
         return self._desktop_app
 
     @property
     def legacy_config(self) -> Path | None:
-        """config.json of an older version that is still a file of its own.
-
-        It normally becomes a link to the profile. Where linking is not allowed a
-        service created before still runs it, until it is pointed at the profile.
-        """
         path = self._config_dir / "config.json"
         if self._desktop_app or not self._store_ready:
             return None
         return path if path.is_file() and not path.is_symlink() else None
 
     def init_directories(self) -> bool:
-        """Create the profile store if it is ours to create (no desktop app)."""
         if self._desktop_app or self._store_ready:
             return True
         created = not settings_path(self._config_dir).exists()
@@ -196,7 +166,6 @@ class ConfigHandler:
 
     @property
     def user(self) -> str:
-        """Get the current username from environment variables."""
         user = (
             os.environ.get("SUDO_USER")
             or os.environ.get("USER")
@@ -208,8 +177,6 @@ class ConfigHandler:
 
     @property
     def bin_path(self) -> Path:
-        """Get the path of the sing-box binary."""
-        # sing-box-beta for linux beta version
         bin_path: Path | str | None = shutil.which("sing-box") or shutil.which(
             "sing-box-beta"
         )
@@ -220,17 +187,14 @@ class ConfigHandler:
 
     @property
     def is_windows(self) -> bool:
-        """Check if the current platform is Windows."""
         return platform.system() == "Windows"
 
     @property
     def config_dir(self) -> Path:
-        """Get the configuration directory path."""
         return self._config_dir.absolute()
 
     @property
     def cache_file_path(self) -> str:
-        """The profile's cache file as written, relative to the core's working directory."""
         experimental = self._sing_box_config.experimental
         if experimental and experimental.cache_file and experimental.cache_file.path:
             return experimental.cache_file.path
@@ -243,7 +207,6 @@ class ConfigHandler:
 
     @property
     def api_base_url(self) -> str:
-        """Get the API base URL from the configuration file."""
         self._require_profile()
         if (
             self._sing_box_config.experimental
@@ -258,7 +221,6 @@ class ConfigHandler:
 
     @property
     def api_secret(self) -> str:
-        """Get the API secret from the configuration file."""
         if (
             self._sing_box_config.experimental
             and self._sing_box_config.experimental.clash_api
@@ -269,12 +231,10 @@ class ConfigHandler:
 
     @property
     def config_file(self) -> Path:
-        """Get the path of the configuration file."""
         return self._config_file
 
     @property
     def config_file_content(self) -> str:
-        """Get the content of the configuration file."""
         self._require_profile()
         return (
             self._config_file.read_text(encoding="utf-8")
@@ -284,16 +244,13 @@ class ConfigHandler:
 
     @config_file_content.setter
     def config_file_content(self, value: str) -> None:
-        """Write the configuration as given and reload the model."""
         self._require_store()
         self._sing_box_config = SingBoxConfig.model_validate_json(value)
-        # the bytes as downloaded: the desktop app compares them on its own refresh
         atomic_write_text(self._config_file, value)
         print("📁 Configuration updated successfully.")
 
     @staticmethod
     def _normalized(text: str, *, strict: bool = False) -> str:
-        """One layout to compare configurations in, so formatting is no difference."""
         try:
             return SingBoxConfig.model_validate_json(text).model_dump_json(indent=2)
         except ValueError:
@@ -303,7 +260,6 @@ class ConfigHandler:
 
     @property
     def _stored_sub_url(self) -> str:
-        """The subscription as stored: with its token, like the desktop app keeps it."""
         return self._require_profile().remote_url or ""
 
     def _subscription(self) -> tuple[str, str]:
@@ -316,12 +272,10 @@ class ConfigHandler:
 
     @property
     def sub_url(self) -> str:
-        """Get the subscription URL, without its token."""
         return self._subscription()[0]
 
     @property
     def token_content(self) -> str:
-        """Get the subscription token, which is kept inside the stored URL."""
         return self._subscription()[1]
 
     def _save_subscription(self, stored: str) -> None:
@@ -330,14 +284,12 @@ class ConfigHandler:
             self._config_dir,
             profile.id,
             remote_url=stored,
-            # a local profile of the app is not ours to turn into a remote one
             make_remote=not self._desktop_app,
         )
         self._profile = dataclasses.replace(profile, remote_url=stored)
         print("📁 Subscription updated successfully.")
 
     def _record_refresh(self) -> None:
-        """Show the refresh in the store, the app lists when a profile was updated."""
         if not (self._profile and self._profile.remote_url):
             return
         try:
@@ -352,8 +304,7 @@ class ConfigHandler:
         *,
         dry_run: bool = False,
     ) -> bool:
-        """Download and diff configuration, optionally without saving changes."""
-        profile = self._require_profile()  # exits when the desktop app has none
+        profile = self._require_profile()
         if self._desktop_app and profile.remote_url is None and sub_url is not None:
             print(
                 "❌ The selected profile in the sing-box app is a local profile, "
@@ -361,14 +312,12 @@ class ConfigHandler:
             )
             return False
         try:
-            # the saved subscription unless another one is given
             given = (self._stored_sub_url if sub_url is None else sub_url).strip()
             if not given:
                 print("❌ No subscription URL found.")
                 return False
             sub_url, token = subscription_credentials(given, token)
             if token is None:
-                # the token of the saved subscription
                 token = self.token_content
             action = "Previewing" if dry_run else "Updating"
             print(f"⌛ {action} configuration from {redact_url(sub_url)}")
@@ -379,13 +328,11 @@ class ConfigHandler:
 
             new_config = response.text
 
-            # make sure same order of keys to avoid showing wrong diff
             current = self._normalized(self.config_file_content)
             proposed = self._normalized(new_config, strict=True)
             if current == proposed:
                 print("📄 Configuration is up to date.")
             else:
-                # show differences before saving
                 show_diff_config(current, proposed)
 
             if dry_run:
@@ -395,10 +342,9 @@ class ConfigHandler:
             if current != proposed:
                 self.config_file_content = new_config
 
-            # Save the subscription once it is known to work
             if (sub_url, token) != (self.sub_url, self.token_content):
                 if given != sub_url:
-                    stored = given  # the token came inside the URL: keep it as given
+                    stored = given
                 else:
                     stored = with_token(sub_url, token) if token else sub_url
                 self._save_subscription(stored)
@@ -409,11 +355,9 @@ class ConfigHandler:
             return False
 
     def clear_cache(self) -> None:
-        """Remove the cache database file."""
         remove_cache_db(self.cache_db)
 
     def __str__(self) -> str:
-        """Return a string representation of the configuration."""
         if self._desktop_app:
             return "🔧 Using sing-box desktop app\n" + (
                 f"📄 Using configuration: {self._profile.path}"
@@ -429,7 +373,6 @@ class ConfigHandler:
 
 
 def get_config(*, initialize: bool = True) -> ConfigHandler:
-    """Load configuration, optionally initializing local directories and files."""
     config = ConfigHandler()
     if initialize and not config.init_directories():
         raise FileNotFoundError("❌ Failed to initialize directories")
@@ -437,7 +380,6 @@ def get_config(*, initialize: bool = True) -> ConfigHandler:
 
 
 def run_args(config: ConfigHandler, *, binary: Path | None = None) -> list[str]:
-    """Build subprocess arguments without splitting paths containing whitespace."""
     return [
         str(binary if binary is not None else config.bin_path),
         "run",

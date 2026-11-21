@@ -1,11 +1,3 @@
-"""Windows desktop installation layout and service ownership.
-
-The official daemon authenticates the installed, signed application and its
-worker, including their parent process relationship. A Python client cannot use
-that private named-pipe API. Share the profile store, but never start a competing
-SCM service or claim that a desktop service operation succeeded.
-"""
-
 import subprocess
 import sys
 from pathlib import Path
@@ -44,12 +36,6 @@ def _registry_values(key: str, names: tuple[str, ...]) -> dict[str, object] | No
 
 
 def application_data_directory(default: Path) -> Path:
-    """Use the installer's layout v2 override, like the packaged desktop app.
-
-    Missing layout metadata is an older installation using %APPDATA%/sing-box.
-    Invalid metadata is an error, never permission to initialize another store.
-    Environment variables in registry strings are not expanded by the app either.
-    """
     values = _registry_values(
         INSTALLATION_KEY,
         ("LayoutVersion", "ApplicationDataDirectory", "DaemonDataDirectory"),
@@ -75,7 +61,6 @@ def application_data_directory(default: Path) -> Path:
 
 
 def desktop_app_installed() -> bool:
-    """Detect an installed desktop app even when its daemon is stopped."""
     return (
         _registry_values(SERVICE_KEY, ()) is not None
         or _registry_values(INSTALLATION_KEY, ()) is not None
@@ -83,8 +68,6 @@ def desktop_app_installed() -> bool:
 
 
 class WindowsDesktopServiceManager(DesktopDaemonServiceManager):
-    """Keep desktop-owned commands out of the standalone Windows service backend."""
-
     def _call(
         self, method: str, request: bytes = b"", *, stream: bool = False
     ) -> bytes:
@@ -104,7 +87,6 @@ class WindowsDesktopServiceManager(DesktopDaemonServiceManager):
             self._call("")
 
     def version(self) -> str:
-        """Query the installed daemon binary without its private RPC or Clash API."""
         with self._guard():
             if sys.platform != "win32":
                 raise DesktopDaemonError(
@@ -135,4 +117,4 @@ class WindowsDesktopServiceManager(DesktopDaemonServiceManager):
                 if line.startswith(prefix) and (version := line[len(prefix) :].strip()):
                     return f"sing-box {version} (desktop daemon)"
             raise DesktopDaemonError("The desktop daemon binary returned no version.")
-        return ""  # unreachable, _guard exits
+        return ""

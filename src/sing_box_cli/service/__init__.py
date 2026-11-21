@@ -40,7 +40,6 @@ def get_context_obj(ctx: typer.Context) -> SharedContext:
 
 
 def ensure_privileges(service: ServiceManager) -> None:
-    """Require root only for backends that manage a system service themselves."""
     if service.requires_root:
         ensure_root()
 
@@ -86,14 +85,12 @@ def service_restart(
             print("❌ --purge-data is only for the sing-box desktop app.")
             raise typer.Exit(1)
         if not yes:
-            # Without a terminal the prompt reads EOF and aborts.
             typer.confirm(
                 f"Delete the desktop daemon's working directory? "
                 f"This loses {_PURGE_DATA_LOSS}",
                 abort=True,
             )
     elif clear_cache:
-        # Removing the cache needs root on every backend; check before stopping.
         ensure_root()
     if service.check_service():
         service.sync_service()
@@ -110,7 +107,7 @@ def service_restart(
     else:
         service.stop()
         if purge_data:
-            service.purge_data()  # the cache goes with it
+            service.purge_data()
         elif clear_cache:
             service.clear_cache()
         service.start()

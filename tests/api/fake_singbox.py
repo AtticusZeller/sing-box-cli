@@ -69,8 +69,6 @@ class _Server(ThreadingHTTPServer):
 
 
 class FakeSingBox:
-    """Minimal sing-box Clash API that can be stopped and restarted on one port."""
-
     def __init__(self, token: str | None = None) -> None:
         with socket.socket() as sock:
             sock.bind(("127.0.0.1", 0))
@@ -104,7 +102,6 @@ class FakeSingBox:
         self._thread.start()
 
     def stop(self) -> None:
-        """Refuse new connections and drop open streams mid-body."""
         if self._server is None:
             return
         self._server.stopped.set()

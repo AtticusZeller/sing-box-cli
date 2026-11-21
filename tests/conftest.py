@@ -16,7 +16,6 @@ def config_path() -> None:
 
 @pytest.fixture(autouse=True)
 def no_desktop_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Never let the host's sing-box desktop app decide what a test sees."""
     from sing_box_cli.service import desktop, desktop_windows
 
     monkeypatch.setattr(desktop, "DAEMON_SOCKET", tmp_path / "absent.socket")
@@ -26,7 +25,6 @@ def no_desktop_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture
 def make_settings_db() -> Callable[..., Path]:
-    """Build (or extend) a copy of the sing-box desktop app's settings database."""
 
     def make(
         config_dir: Path,
@@ -35,7 +33,6 @@ def make_settings_db() -> Callable[..., Path]:
         profiles: dict[str, str | None] | None = None,
         preferences: dict[str, object] | None = None,
     ) -> Path:
-        """``profiles`` maps id to subscription URL, None for a local profile."""
         path = config_dir / "settings.db"
         db = sqlite3.connect(path)
         with db:

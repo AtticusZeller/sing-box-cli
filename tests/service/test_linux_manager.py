@@ -1,5 +1,3 @@
-"""A service that did not come up must not be reported as started."""
-
 import importlib
 import subprocess
 from pathlib import Path
@@ -30,7 +28,6 @@ def manager(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> LinuxServiceMana
 def mock_systemctl(
     monkeypatch: pytest.MonkeyPatch, **exit_codes: int
 ) -> list[list[str]]:
-    """Replace systemctl: an action exits with the code given for it, 0 otherwise."""
     calls: list[list[str]] = []
 
     def run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
@@ -63,7 +60,6 @@ def test_refused_start_ends_the_command(
     capsys: pytest.CaptureFixture[str],
     action: str,
 ) -> None:
-    """For example the unit's start limit, hit after a few failed starts."""
     calls = mock_systemctl(monkeypatch, **{action: 1})
 
     with pytest.raises(typer.Exit) as failure:
@@ -81,7 +77,6 @@ def test_core_that_exits_right_after_starting_ends_the_command(
     capsys: pytest.CaptureFixture[str],
     action: str,
 ) -> None:
-    """systemd is done once the core is executed, a rejected configuration is not seen."""
     mock_systemctl(monkeypatch, is_active=3)
 
     with pytest.raises(typer.Exit) as failure:
